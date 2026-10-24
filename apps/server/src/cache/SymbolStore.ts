@@ -1,6 +1,8 @@
 import type { Bar, Quote, ReferenceData, SessionSeed, SymbolSnapshot, Trade } from '@deltascan/shared';
 
 const DEFAULT_MAX_BARS = 500;
+/** Per-second price samples kept for momentum (5 minutes + 1). */
+const MOMENTUM_SAMPLES = 301;
 /** Below this fraction of the session, RVOL is too noisy to be meaningful. */
 const MIN_SESSION_FRACTION_FOR_RVOL = 0.005;
 
@@ -16,6 +18,10 @@ interface Entry {
   pv: number;
   /** Ring buffer of recent 1-minute bars, oldest first. Feeds the indicator engine. */
   bars: Bar[];
+  /** Ring buffer of last price sampled once per second (see `sampleMomentum`). */
+  samples: Float64Array;
+  sampleHead: number;
+  sampleCount: number;
 }
 
 /**
@@ -54,8 +60,34 @@ export class SymbolStore {
     s.lastTradeAt = t.timestamp;
     s.changePct = pct(t.price, s.prevClose);
     s.rvol = this.rvol(s, t.timestamp);
+    updateMomentum(e);
     s.updatedAt = Date.now();
     this.dirty.add(t.symbol);
+  }
+
+  /**
+   * Records every symbol's last price. Call once per second; feeds the 1m/5m change used by
+   * momentum scans. Also refreshes momentum for symbols that haven't traded (e.g. halted).
+   */
+  sampleMomentum(): void {
+    for (const [symbol, e] of this.entries) {
+      if (e.snap.last === null) continue;
+      e.samples[e.sampleHead] = e.snap.last;
+      e.sampleHead = (e.sampleHead + 1) % MOMENTUM_SAMPLES;
+      e.sampleCount = Math.min(e.sampleCount + 1, MOMENTUM_SAMPLES);
+      const before1 = e.snap.chg1mPct;
+      const before5 = e.snap.chg5mPct;
+      updateMomentum(e);
+      if (e.snap.chg1mPct !== before1 || e.snap.chg5mPct !== before5) this.dirty.add(symbol);
+    }
+  }
+
+  setHalted(symbol: string, halted: boolean): void {
+    const s = this.entry(symbol).snap;
+    if (s.halted === halted) return;
+    s.halted = halted;
+    s.updatedAt = Date.now();
+    this.dirty.add(symbol);
   }
 
   applyQuote(q: Quote): void {
@@ -162,6 +194,7 @@ export class SymbolStore {
         prevClose: prev.last ?? prev.prevClose,
       };
       e.pv = 0;
+      e.sampleCount = 0;
       this.dirty.add(symbol);
     }
   }
@@ -176,7 +209,14 @@ export class SymbolStore {
   private entry(symbol: string): Entry {
     let e = this.entries.get(symbol);
     if (!e) {
-      e = { snap: emptySnapshot(symbol), pv: 0, bars: [] };
+      e = {
+        snap: emptySnapshot(symbol),
+        pv: 0,
+        bars: [],
+        samples: new Float64Array(MOMENTUM_SAMPLES),
+        sampleHead: 0,
+        sampleCount: 0,
+      };
       this.entries.set(symbol, e);
     }
     return e;
@@ -185,6 +225,18 @@ export class SymbolStore {
 
 function pct(value: number | null, base: number | null): number | null {
   return value !== null && base ? ((value - base) / base) * 100 : null;
+}
+
+/** Price sampled `seconds` ago, or the oldest sample if history is shorter. */
+function priceAgo(e: Entry, seconds: number): number | null {
+  if (e.sampleCount === 0) return null;
+  const back = Math.min(seconds, e.sampleCount - 1);
+  return e.samples[(e.sampleHead - 1 - back + 2 * MOMENTUM_SAMPLES) % MOMENTUM_SAMPLES]!;
+}
+
+function updateMomentum(e: Entry): void {
+  e.snap.chg1mPct = pct(e.snap.last, priceAgo(e, 60));
+  e.snap.chg5mPct = pct(e.snap.last, priceAgo(e, 300));
 }
 
 function emptySnapshot(symbol: string): SymbolSnapshot {
@@ -211,6 +263,9 @@ function emptySnapshot(symbol: string): SymbolSnapshot {
     marketCap: null,
     shortInterestPct: null,
     avgVolume: null,
+    chg1mPct: null,
+    chg5mPct: null,
+    halted: false,
     lastTradeAt: null,
     updatedAt: Date.now(),
   };

@@ -2,13 +2,15 @@ import type { RawData } from 'ws';
 import type { Logger } from '../../../lib/logger';
 import { ReconnectingSocket } from '../../ReconnectingSocket';
 import { MarketDataProvider } from '../MarketDataProvider';
-import { parseAlpacaTimestamp, type AlpacaMessage } from './messages';
+import { haltStateOf, parseAlpacaTimestamp, type AlpacaMessage } from './messages';
 
 export interface AlpacaStreamOptions {
   keyId: string;
   secretKey: string;
   feed: 'iex' | 'sip' | 'test';
   sandbox: boolean;
+  /** Subscribe to trading statuses (halts). Off by default until verified on your data plan. */
+  statuses: boolean;
   logger: Logger;
   heartbeatIntervalMs: number;
   heartbeatTimeoutMs: number;
@@ -77,7 +79,13 @@ export class AlpacaStreamProvider extends MarketDataProvider {
 
   private sendSubscription(action: 'subscribe' | 'unsubscribe', symbols: string[]): void {
     if (!symbols.length) return;
-    this.socket.send({ action, trades: symbols, quotes: symbols, bars: symbols });
+    this.socket.send({
+      action,
+      trades: symbols,
+      quotes: symbols,
+      bars: symbols,
+      ...(this.opts.statuses ? { statuses: symbols } : {}),
+    });
     this.log.info({ action, count: symbols.length }, 'subscription sent');
   }
 
@@ -126,6 +134,19 @@ export class AlpacaStreamProvider extends MarketDataProvider {
             timestamp: parseAlpacaTimestamp(msg.t),
           });
           break;
+        case 's': {
+          const state = haltStateOf(msg.sc);
+          if (state) {
+            this.emit('tradingStatus', {
+              symbol: msg.S,
+              state,
+              reasonCode: msg.rc,
+              reason: msg.rm || undefined,
+              timestamp: parseAlpacaTimestamp(msg.t),
+            });
+          }
+          break;
+        }
         case 'success':
           this.handleControl(msg.msg);
           break;

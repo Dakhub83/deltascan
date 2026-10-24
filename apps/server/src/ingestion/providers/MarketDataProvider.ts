@@ -7,6 +7,7 @@ import type {
   ReferenceData,
   SessionSeed,
   Trade,
+  TradingStatus,
 } from '@deltascan/shared';
 
 export type ProviderEvents = {
@@ -16,6 +17,8 @@ export type ProviderEvents = {
   /** Today's session-to-date state, emitted before streaming (snapshot bootstrap). */
   seed: [seed: SessionSeed];
   reference: [ref: ReferenceData];
+  /** Exchange trading status: halts, quotation-only, resumptions. */
+  tradingStatus: [status: TradingStatus];
   status: [status: ProviderStatus];
 };
 

@@ -34,6 +34,7 @@ const schema = z
     ALPACA_FEED: z.enum(['iex', 'sip', 'test']).default('iex'),
     ALPACA_SANDBOX: bool(false),
     ALPACA_PAPER: bool(true),
+    ALPACA_STATUSES: bool(false),
 
     POLYGON_API_KEY: z.string().optional(),
     FINNHUB_API_KEY: z.string().optional(),
@@ -51,6 +52,7 @@ const schema = z
 
     MOCK_TICKS_PER_SECOND: int(200),
     MOCK_SESSION_START: z.coerce.number().min(0).max(1).default(0.35),
+    MOCK_HALT_SECONDS: int(90),
 
     DB_PATH: z.string().default('./data/scanner.db'),
   })

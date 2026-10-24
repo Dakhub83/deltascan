@@ -4,12 +4,14 @@ import type { ProviderStatus, ServerMessage } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
+import type { HaltTracker } from '../scanner/HaltTracker';
 
 export interface ClientGatewayOptions {
   port: number;
   broadcastIntervalMs: number;
   store: SymbolStore;
   alerts: AlertEngine;
+  halts: HaltTracker;
   getStatus: () => ProviderStatus | null;
   getStats: () => { tradesPerSec: number; quotesPerSec: number; symbols: number };
   logger: Logger;
@@ -90,6 +92,7 @@ export class ClientGateway {
       data: {
         snapshots: this.opts.store.all().map((s) => ({ ...s })),
         alerts: this.opts.alerts.recent(),
+        halts: this.opts.halts.recent(),
         status: this.opts.getStatus(),
         serverTime: Date.now(),
       },
@@ -101,7 +104,9 @@ export class ClientGateway {
   private flush(): void {
     const snapshots = this.opts.store.drainDirty();
     const alerts = this.opts.alerts.drain();
+    const halts = this.opts.halts.drain();
     if (snapshots.length) this.broadcast({ type: 'snapshots', data: snapshots });
+    if (halts.length) this.broadcast({ type: 'halts', data: halts });
     if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
   }
 

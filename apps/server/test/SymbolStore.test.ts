@@ -74,6 +74,29 @@ describe('SymbolStore', () => {
     expect(store.get('ABC')!.vwap).toBeCloseTo(11);
   });
 
+  it('tracks 1m / 5m momentum from per-second samples', () => {
+    const store = new SymbolStore();
+    store.applyTrade(trade(10, 100));
+    for (let i = 0; i < 240; i++) store.sampleMomentum(); // 4 min at $10
+    store.applyTrade(trade(10.5, 100));
+    for (let i = 0; i < 61; i++) store.sampleMomentum(); // 1 min at $10.50
+    store.applyTrade(trade(11, 100));
+
+    const s = store.get('ABC')!;
+    expect(s.chg1mPct).toBeCloseTo((11 / 10.5 - 1) * 100); // vs 60s ago
+    expect(s.chg5mPct).toBeCloseTo(10); // vs oldest sample (5 min ago)
+  });
+
+  it('marks halted symbols dirty only on change', () => {
+    const store = new SymbolStore();
+    store.applyTrade(trade(10, 100));
+    store.drainDirty();
+    store.setHalted('ABC', true);
+    store.setHalted('ABC', true);
+    expect(store.drainDirty()).toHaveLength(1);
+    expect(store.get('ABC')!.halted).toBe(true);
+  });
+
   it('resetSession rolls last price into prevClose', () => {
     const store = new SymbolStore();
     store.applyTrade(trade(20, 100));

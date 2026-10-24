@@ -85,8 +85,49 @@ export interface SymbolSnapshot {
   marketCap: number | null;
   shortInterestPct: number | null;
   avgVolume: number | null;
+  /** % change over the last 1 / 5 minutes (or since the oldest sample, if less history). */
+  chg1mPct: number | null;
+  chg5mPct: number | null;
+  halted: boolean;
   lastTradeAt: EpochMs | null;
   updatedAt: EpochMs;
+}
+
+// ── Trading halts ──
+
+export type HaltState = 'halted' | 'quoting' | 'resumed';
+
+/** Normalized exchange trading-status message (provider → server). */
+export interface TradingStatus {
+  symbol: string;
+  state: HaltState;
+  reasonCode: string;
+  reason?: string;
+  /** Price at the moment of the event, when the provider knows it (halt price / resume print). */
+  price?: number;
+  /** LULD band hit, when the provider knows it; otherwise inferred from recent momentum. */
+  direction?: 'up' | 'down';
+  timestamp: EpochMs;
+}
+
+/** One halt, from pause to resumption. Updated in place as it progresses. */
+export interface HaltEvent {
+  id: string;
+  symbol: string;
+  state: HaltState;
+  reasonCode: string;
+  reason: string;
+  /** LULD pauses: which band was hit. */
+  direction: 'up' | 'down' | null;
+  haltedAt: EpochMs;
+  /** Expected resumption (LULD pauses are 5 minutes), null when open-ended (e.g. news). */
+  expectedResumeAt: EpochMs | null;
+  resumedAt: EpochMs | null;
+  haltPrice: number | null;
+  haltChangePct: number | null;
+  resumePrice: number | null;
+  /** First print after resumption vs. halt price. */
+  resumeGapPct: number | null;
 }
 
 export type ConnectionState =
@@ -114,6 +155,8 @@ export const ALERT_TYPES = [
   'vwap_loss',
   'volume_spike',
   'block_trade',
+  'halt',
+  'resume',
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
@@ -141,9 +184,17 @@ export interface ServerStats {
 export type ServerMessage =
   | {
       type: 'hello';
-      data: { snapshots: SymbolSnapshot[]; alerts: Alert[]; status: ProviderStatus | null; serverTime: EpochMs };
+      data: {
+        snapshots: SymbolSnapshot[];
+        alerts: Alert[];
+        halts: HaltEvent[];
+        status: ProviderStatus | null;
+        serverTime: EpochMs;
+      };
     }
   | { type: 'snapshots'; data: SymbolSnapshot[] }
   | { type: 'alerts'; data: Alert[] }
+  /** New or updated halts (upsert by id). */
+  | { type: 'halts'; data: HaltEvent[] }
   | { type: 'status'; data: ProviderStatus }
   | { type: 'stats'; data: ServerStats };

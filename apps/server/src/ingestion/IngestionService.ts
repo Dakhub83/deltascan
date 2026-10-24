@@ -3,6 +3,7 @@ import type { Env } from '../config/env';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine, PriorState } from '../scanner/AlertEngine';
+import type { HaltTracker } from '../scanner/HaltTracker';
 import type { MarketDataProvider } from './providers/MarketDataProvider';
 import { AlpacaStreamProvider } from './providers/alpaca/AlpacaStreamProvider';
 import { MockProvider } from './providers/mock/MockProvider';
@@ -19,6 +20,7 @@ export class IngestionService {
     private readonly env: Env,
     private readonly store: SymbolStore,
     private readonly alerts: AlertEngine,
+    private readonly halts: HaltTracker,
     private readonly logger: Logger,
     private readonly onStatus: (status: ProviderStatus) => void = () => {},
   ) {
@@ -35,6 +37,11 @@ export class IngestionService {
       this.store.applyTrade(t);
       const after = this.store.get(t.symbol);
       if (after) this.alerts.onTrade(t, this.prior, after);
+      this.halts.onTrade(t);
+    });
+    this.provider.on('tradingStatus', (s) => {
+      this.halts.onStatus(s, this.store.get(s.symbol));
+      this.store.setHalted(s.symbol, this.halts.isHalted(s.symbol));
     });
     this.provider.on('quote', (q) => {
       this.counts.quotes++;
@@ -92,12 +99,14 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
         secretKey: env.ALPACA_SECRET_KEY!,
         feed: env.ALPACA_FEED,
         sandbox: env.ALPACA_SANDBOX,
+        statuses: env.ALPACA_STATUSES,
       });
     case 'mock':
       return new MockProvider({
         logger,
         ticksPerSecond: env.MOCK_TICKS_PER_SECOND,
         startFraction: env.MOCK_SESSION_START,
+        haltSeconds: env.MOCK_HALT_SECONDS,
       });
   }
 }

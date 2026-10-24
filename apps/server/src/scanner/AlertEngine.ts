@@ -28,6 +28,8 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   vwap_loss: 45_000,
   volume_spike: 60_000,
   block_trade: 0,
+  halt: 0,
+  resume: 0,
 };
 
 const REGULAR_SESSION_MINUTES = 390;
@@ -122,6 +124,16 @@ export class AlertEngine {
     }
   }
 
+  /** Alerts detected by other components (e.g. halts), subject to the same cooldowns. */
+  raise(
+    type: AlertType,
+    event: Pick<Trade, 'symbol' | 'price' | 'timestamp'>,
+    changePct: number | null,
+    detail: string,
+  ): void {
+    this.fire(type, event, { changePct }, detail);
+  }
+
   /** Alerts raised since the last drain (for broadcasting). */
   drain(): Alert[] {
     const out = this.pending;
@@ -134,7 +146,13 @@ export class AlertEngine {
     return [...this.history].reverse();
   }
 
-  private fire(type: AlertType, t: Trade, snap: Readonly<SymbolSnapshot>, detail: string, value: number): void {
+  private fire(
+    type: AlertType,
+    t: Pick<Trade, 'symbol' | 'price' | 'timestamp'>,
+    snap: Pick<SymbolSnapshot, 'changePct'>,
+    detail: string,
+    value?: number,
+  ): void {
     const key = `${t.symbol}:${type}`;
     const last = this.lastFired.get(key);
     if (last !== undefined && t.timestamp - last < this.cooldownMs[type]) return;

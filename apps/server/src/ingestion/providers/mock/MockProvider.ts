@@ -6,6 +6,8 @@ export interface MockProviderOptions {
   ticksPerSecond: number;
   /** Simulated session progress (0–1) at startup; seeds are sized to match. */
   startFraction: number;
+  /** Length of a simulated LULD pause (real ones are 300 s; shorter is handier for UI work). */
+  haltSeconds: number;
   logger: Logger;
 }
 
@@ -38,6 +40,22 @@ const TICK_INTERVAL_MS = 50;
 const SESSION_SECONDS = 6.5 * 3600;
 const BLOCK_CHANCE = 0.0005;
 
+// Halts: a burst that moves a small/mid cap this far triggers an LULD pause.
+const HALT_TRIGGER_MOVE = 0.08;
+const MAX_ACTIVE_HALTS = 3;
+const HALT_COOLDOWN_MS = 5 * 60_000;
+const NEWS_HALT_CHANCE = 0.00002;
+/** Quotation-only period before re-opening. */
+const QUOTING_LEAD_MS = 15_000;
+
+interface SimHalt {
+  until: number;
+  quotingAt: number;
+  quoting: boolean;
+  reasonCode: string;
+  dir: 1 | -1;
+}
+
 interface Sim {
   meta: MockSymbol;
   spec: ProfileSpec;
@@ -48,6 +66,9 @@ interface Sim {
   /** Remaining trades of an active momentum burst. */
   burst: number;
   burstDir: 1 | -1;
+  burstStartPrice: number;
+  halt: SimHalt | null;
+  haltCooldownUntil: number;
 }
 
 /**
@@ -59,6 +80,7 @@ export class MockProvider extends MarketDataProvider {
   readonly name = 'mock';
   private readonly sims = new Map<string, Sim>();
   private timer: NodeJS.Timeout | null = null;
+  private seededHalts = false;
 
   constructor(private readonly opts: MockProviderOptions) {
     super();
@@ -92,6 +114,10 @@ export class MockProvider extends MarketDataProvider {
       this.seedSymbol(meta);
     }
     this.resizeTrades();
+    if (!this.seededHalts) {
+      this.seededHalts = true;
+      this.seedHalts();
+    }
   }
 
   protected onUnsubscribe(symbols: string[]): void {
@@ -126,6 +152,9 @@ export class MockProvider extends MarketDataProvider {
       avgTradeSize: 0,
       burst: 0,
       burstDir: 1,
+      burstStartPrice: last,
+      halt: null,
+      haltCooldownUntil: 0,
     });
 
     this.emit('reference', {
@@ -158,20 +187,89 @@ export class MockProvider extends MarketDataProvider {
     }
   }
 
+  /** Today's earlier halts (already resumed) plus one in progress, so the Halts window isn't empty at start. */
+  private seedHalts(): void {
+    const now = Date.now();
+    const pauseMs = this.opts.haltSeconds * 1000;
+    const candidates = [...this.sims.values()].filter((s) => s.meta.profile === 'micro' && s.inPlay);
+
+    candidates.slice(0, 3).forEach((sim, i) => {
+      const haltedAt = now - (25 + i * 35) * 60_000;
+      const haltPrice = round(sim.price * uniform(0.82, 0.95));
+      const base = { symbol: sim.meta.symbol, reasonCode: 'LUDP', direction: 'up' as const };
+      this.emit('tradingStatus', { ...base, state: 'halted', price: haltPrice, timestamp: haltedAt });
+      this.emit('tradingStatus', {
+        ...base,
+        state: 'resumed',
+        price: round(haltPrice * uniform(1.01, 1.12)),
+        timestamp: haltedAt + pauseMs,
+      });
+    });
+
+    const live = candidates[3];
+    if (live) this.startHalt(live, now - pauseMs * 0.3, 'LUDP', 1);
+  }
+
+  private startHalt(sim: Sim, at: number, reasonCode: string, dir: 1 | -1): void {
+    const duration = this.opts.haltSeconds * 1000 * (reasonCode === 'LUDP' ? 1 : uniform(2, 3));
+    sim.halt = { until: at + duration, quotingAt: at + duration - QUOTING_LEAD_MS, quoting: false, reasonCode, dir };
+    sim.burst = 0;
+    this.emit('tradingStatus', {
+      symbol: sim.meta.symbol,
+      state: 'halted',
+      reasonCode,
+      direction: dir > 0 ? 'up' : 'down',
+      price: roundTo(sim.price, sim.price < 1 ? 0.0001 : 0.01),
+      timestamp: at,
+    });
+  }
+
+  private advanceHalt(sim: Sim, now: number): void {
+    const halt = sim.halt!;
+    const base = { symbol: sim.meta.symbol, reasonCode: halt.reasonCode, timestamp: now };
+    if (!halt.quoting && now >= halt.quotingAt) {
+      halt.quoting = true;
+      this.emit('tradingStatus', { ...base, state: 'quoting' });
+    }
+    if (now < halt.until) return;
+
+    // Re-open gaps, usually continuing the move that caused the halt.
+    const dir = Math.random() < 0.65 ? halt.dir : -halt.dir;
+    sim.price *= 1 + dir * uniform(0.01, 0.15);
+    sim.halt = null;
+    sim.haltCooldownUntil = now + HALT_COOLDOWN_MS;
+    sim.burst = 60 + Math.floor(Math.random() * 120);
+    sim.burstDir = dir;
+    sim.burstStartPrice = sim.price;
+    this.emit('tradingStatus', { ...base, state: 'resumed' });
+  }
+
   private tick(): void {
     if (!this.sims.size) return;
-    const sims = [...this.sims.values()];
-    const weights = sims.map((s) => s.spec.weight * (s.inPlay ? 3 : 1) * (s.burst > 0 ? 4 : 1));
-    const total = weights.reduce((a, b) => a + b, 0);
-    const picks = Math.max(1, Math.round((this.opts.ticksPerSecond * TICK_INTERVAL_MS) / 1000));
     const now = Date.now();
+    const sims = [...this.sims.values()];
+    for (const sim of sims) if (sim.halt) this.advanceHalt(sim, now);
+
+    const weights = sims.map((s) =>
+      s.halt ? 0 : s.spec.weight * (s.inPlay ? 3 : 1) * (s.burst > 0 ? 4 : 1),
+    );
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total === 0) return;
+    const picks = Math.max(1, Math.round((this.opts.ticksPerSecond * TICK_INTERVAL_MS) / 1000));
 
     for (let i = 0; i < picks; i++) {
       let r = Math.random() * total;
       let idx = 0;
       while (idx < sims.length - 1 && (r -= weights[idx]!) > 0) idx++;
-      this.tradeOnce(sims[idx]!, now);
+      const sim = sims[idx]!;
+      if (!sim.halt) this.tradeOnce(sim, now);
     }
+  }
+
+  private activeHalts(): number {
+    let n = 0;
+    for (const s of this.sims.values()) if (s.halt) n++;
+    return n;
   }
 
   private tradeOnce(sim: Sim, now: number): void {
@@ -179,6 +277,7 @@ export class MockProvider extends MarketDataProvider {
     if (sim.burst === 0 && Math.random() < spec.burstChance * (sim.inPlay ? 2 : 1)) {
       sim.burst = 80 + Math.floor(Math.random() * 400);
       sim.burstDir = Math.random() < 0.7 ? 1 : -1;
+      sim.burstStartPrice = sim.price;
     }
     const bursting = sim.burst > 0;
     if (bursting) sim.burst--;
@@ -206,6 +305,18 @@ export class MockProvider extends MarketDataProvider {
     size = size >= 100 ? Math.round(size / 100) * 100 : Math.max(1, Math.round(size));
 
     this.emit('trade', { symbol: meta.symbol, price, size, timestamp: now, exchange: 'SIM' });
+
+    const canHalt =
+      (meta.profile === 'micro' || meta.profile === 'mid') &&
+      now >= sim.haltCooldownUntil &&
+      this.activeHalts() < MAX_ACTIVE_HALTS;
+    if (!canHalt) return;
+    const burstMove = sim.price / sim.burstStartPrice - 1;
+    if (bursting && Math.abs(burstMove) >= HALT_TRIGGER_MOVE) {
+      this.startHalt(sim, now, 'LUDP', burstMove > 0 ? 1 : -1);
+    } else if (meta.profile === 'micro' && Math.random() < NEWS_HALT_CHANCE) {
+      this.startHalt(sim, now, 'T1', Math.random() < 0.6 ? 1 : -1);
+    }
   }
 }
 
