@@ -1,4 +1,4 @@
-# Stock Scanner
+# DeltaScan
 
 Real-time day and swing trading scanner, inspired by Trade Ideas, Scanz and Day Trade Dash.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the stack, design and roadmap.
@@ -6,7 +6,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the stack, design and roadm
 ## Layout
 
 ```
-stock-scanner/
+deltascan/
 ├─ apps/
 │  ├─ server/                 Node data engine (ws://localhost:4000/ws)
 │  │  ├─ src/config/env.ts    typed + validated environment

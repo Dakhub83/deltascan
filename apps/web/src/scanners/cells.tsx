@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CustomCellRendererProps } from 'ag-grid-react';
-import type { SymbolSnapshot } from '@scanner/shared';
+import type { SymbolSnapshot } from '@deltascan/shared';
 import clsx from 'clsx';
 import { fmtCompact, fmtMultiple, fmtPct, fmtPrice } from '../lib/format';
 import { useUiStore } from '../store/uiStore';

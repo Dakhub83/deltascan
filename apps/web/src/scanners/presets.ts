@@ -1,4 +1,4 @@
-import type { SymbolSnapshot } from '@scanner/shared';
+import type { SymbolSnapshot } from '@deltascan/shared';
 import { Gauge, List, Rocket, Sunrise, Target, TrendingDown, TrendingUp, Waves, type LucideIcon } from 'lucide-react';
 import { derived, type ColumnId } from './columns';
 

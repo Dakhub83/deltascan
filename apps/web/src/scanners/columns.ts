@@ -1,5 +1,5 @@
 import type { ColDef, ValueGetterParams } from 'ag-grid-community';
-import type { SymbolSnapshot } from '@scanner/shared';
+import type { SymbolSnapshot } from '@deltascan/shared';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
 import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, SymbolCell } from './cells';
 

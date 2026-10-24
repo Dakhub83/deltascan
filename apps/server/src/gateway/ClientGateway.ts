@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { ProviderStatus, ServerMessage } from '@scanner/shared';
+import type { ProviderStatus, ServerMessage } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';

@@ -232,7 +232,9 @@ export function TopBar() {
         <div className="grid size-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-accent/30 ring-inset">
           <Radar className="size-4 text-accent" />
         </div>
-        <span className="text-[13px] font-semibold tracking-tight">Scanner</span>
+        <span className="text-[14px] font-semibold tracking-tight">
+          Delta<span className="text-accent">Scan</span>
+        </span>
         {simulated && (
           <span className="flex items-center gap-1 rounded bg-warn/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-warn ring-1 ring-warn/25 ring-inset">
             <Zap className="size-3" />

@@ -1,5 +1,5 @@
 {
-  "name": "@scanner/server",
+  "name": "@deltascan/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@scanner/shared": "*",
+    "@deltascan/shared": "*",
     "dotenv": "^16.4.5",
     "pino": "^9.5.0",
     "ws": "^8.18.0",

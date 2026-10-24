@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact, type CustomCellRendererProps } from 'ag-grid-react';
 import type { ColDef, GetRowIdParams, GridApi, GridReadyEvent, RowClassParams } from 'ag-grid-community';
 import type { IDockviewPanelProps } from 'dockview';
-import { ALERT_TYPES, type Alert, type AlertType } from '@scanner/shared';
+import { ALERT_TYPES, type Alert, type AlertType } from '@deltascan/shared';
 import { Eraser, Volume2, VolumeX } from 'lucide-react';
 import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';

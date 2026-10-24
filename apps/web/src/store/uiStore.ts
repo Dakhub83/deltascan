@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AlertType, ProviderStatus, ServerStats } from '@scanner/shared';
+import type { AlertType, ProviderStatus, ServerStats } from '@deltascan/shared';
 
 export type SocketState = 'connecting' | 'open' | 'closed';
 
@@ -43,7 +43,7 @@ export const useUiStore = create<UiState>()(
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
     }),
     {
-      name: 'scanner.ui.v1',
+      name: 'deltascan.ui.v1',
       partialize: (s) => ({ settings: s.settings, selectedSymbol: s.selectedSymbol }),
     },
   ),

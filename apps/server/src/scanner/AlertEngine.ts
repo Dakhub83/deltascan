@@ -1,4 +1,4 @@
-import type { Alert, AlertType, SymbolSnapshot, Trade } from '@scanner/shared';
+import type { Alert, AlertType, SymbolSnapshot, Trade } from '@deltascan/shared';
 
 /** State of a symbol immediately before a trade was applied. */
 export interface PriorState {

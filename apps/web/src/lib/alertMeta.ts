@@ -1,4 +1,4 @@
-import type { AlertType } from '@scanner/shared';
+import type { AlertType } from '@deltascan/shared';
 import { ArrowDownToLine, ArrowUpToLine, Blocks, ChevronsDown, ChevronsUp, Flame, type LucideIcon } from 'lucide-react';
 
 export interface AlertMeta {

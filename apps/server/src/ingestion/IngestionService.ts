@@ -1,4 +1,4 @@
-import type { ProviderStatus, ServerStats } from '@scanner/shared';
+import type { ProviderStatus, ServerStats } from '@deltascan/shared';
 import type { Env } from '../config/env';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';

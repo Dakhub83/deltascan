@@ -1,7 +1,7 @@
 import type { DockviewApi } from 'dockview';
 import { PRESETS_BY_ID } from '../scanners/presets';
 
-const STORAGE_KEY = 'scanner.layout.v1';
+const STORAGE_KEY = 'deltascan.layout.v1';
 const SAVE_DEBOUNCE_MS = 500;
 
 let api: DockviewApi | null = null;

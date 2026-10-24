@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Alert, SymbolSnapshot } from '@scanner/shared';
+import type { Alert, SymbolSnapshot } from '@deltascan/shared';
 import { Crosshair } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';

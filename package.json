@@ -1,5 +1,5 @@
 {
-  "name": "stock-scanner",
+  "name": "deltascan",
   "private": true,
   "version": "0.1.0",
   "description": "Real-time stock scanner for day and swing trading",
@@ -12,10 +12,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w @scanner/server\" \"npm run dev -w @scanner/web\"",
-    "dev:server": "npm run dev -w @scanner/server",
-    "dev:web": "npm run dev -w @scanner/web",
-    "build": "npm run build -w @scanner/web",
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w @deltascan/server\" \"npm run dev -w @deltascan/web\"",
+    "dev:server": "npm run dev -w @deltascan/server",
+    "dev:web": "npm run dev -w @deltascan/web",
+    "build": "npm run build -w @deltascan/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },

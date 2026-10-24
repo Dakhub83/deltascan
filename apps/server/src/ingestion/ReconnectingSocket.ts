@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import WebSocket, { type RawData } from 'ws';
-import type { ConnectionState } from '@scanner/shared';
+import type { ConnectionState } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 
 export interface ReconnectingSocketOptions {

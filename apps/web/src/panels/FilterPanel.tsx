@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, ColumnState, GetRowIdParams, GridApi, GridReadyEvent, IRowNode } from 'ag-grid-community';
 import type { IDockviewPanelProps } from 'dockview';
-import type { SymbolSnapshot } from '@scanner/shared';
+import type { SymbolSnapshot } from '@deltascan/shared';
 import { Check, ChevronDown, Columns3, Pause, Play } from 'lucide-react';
 import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';

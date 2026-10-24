@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SymbolSnapshot } from '@scanner/shared';
+import type { SymbolSnapshot } from '@deltascan/shared';
 import { AlertEngine, type PriorState } from '../src/scanner/AlertEngine';
 
 const snap = (over: Partial<SymbolSnapshot> = {}) =>

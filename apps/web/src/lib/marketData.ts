@@ -1,4 +1,4 @@
-import type { Alert, ServerMessage, SymbolSnapshot } from '@scanner/shared';
+import type { Alert, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
 
 export type RowsListener = (changed: SymbolSnapshot[], reset: boolean) => void;

@@ -7,7 +7,7 @@ import type {
   ReferenceData,
   SessionSeed,
   Trade,
-} from '@scanner/shared';
+} from '@deltascan/shared';
 
 export type ProviderEvents = {
   trade: [trade: Trade];

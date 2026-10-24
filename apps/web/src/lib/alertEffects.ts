@@ -1,4 +1,4 @@
-import type { Alert } from '@scanner/shared';
+import type { Alert } from '@deltascan/shared';
 import { ALERT_META } from './alertMeta';
 import { marketData } from './marketData';
 import { useUiStore } from '../store/uiStore';

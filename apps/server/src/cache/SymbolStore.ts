@@ -1,4 +1,4 @@
-import type { Bar, Quote, ReferenceData, SessionSeed, SymbolSnapshot, Trade } from '@scanner/shared';
+import type { Bar, Quote, ReferenceData, SessionSeed, SymbolSnapshot, Trade } from '@deltascan/shared';
 
 const DEFAULT_MAX_BARS = 500;
 /** Below this fraction of the session, RVOL is too noisy to be meaningful. */
