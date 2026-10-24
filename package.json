@@ -1,0 +1,25 @@
+{
+  "name": "stock-scanner",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Real-time stock scanner for day and swing trading",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w @scanner/server\" \"npm run dev -w @scanner/web\"",
+    "dev:server": "npm run dev -w @scanner/server",
+    "dev:web": "npm run dev -w @scanner/web",
+    "build": "npm run build -w @scanner/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  }
+}

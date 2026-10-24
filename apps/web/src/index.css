@@ -1,0 +1,141 @@
+@import 'tailwindcss';
+@import 'dockview/dist/styles/dockview.css';
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', monospace;
+
+  --color-bg: #07090d;
+  --color-panel: #0c1017;
+  --color-raised: #121823;
+  --color-hover: #18202d;
+  --color-line: #1c2431;
+  --color-line-strong: #283244;
+  --color-fg: #dfe4ec;
+  --color-dim: #a3adbd;
+  --color-muted: #6b7587;
+  --color-accent: #3d8bfd;
+  --color-up: #16c784;
+  --color-down: #f0464f;
+  --color-warn: #f5a524;
+  --color-violet: #a78bfa;
+  --color-cyan: #22d3ee;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-size: 12px;
+    overflow: hidden;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Price flash (cell renderer toggles these) ── */
+@keyframes flash-up {
+  from { background-color: color-mix(in srgb, var(--color-up) 20%, transparent); color: var(--color-up); }
+  to { background-color: transparent; }
+}
+@keyframes flash-down {
+  from { background-color: color-mix(in srgb, var(--color-down) 20%, transparent); color: var(--color-down); }
+  to { background-color: transparent; }
+}
+.flash-up { animation: flash-up 450ms ease-out; }
+.flash-down { animation: flash-down 450ms ease-out; }
+
+/* New alert rows glow briefly when inserted */
+@keyframes row-in {
+  from { background-color: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+  to { background-color: transparent; }
+}
+.ag-row.alert-new { animation: row-in 1.6s ease-out; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+/* ── AG Grid fine-tuning beyond theme params ── */
+.ag-theme-scanner .ag-cell {
+  display: flex;
+  align-items: center;
+}
+.ag-theme-scanner .ag-header-cell-text {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ag-theme-scanner .ag-row-selected::before {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+/* ── Dockview theme ── */
+.dockview-theme-scanner {
+  --dv-paneview-active-outline-color: var(--color-accent);
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --dv-drag-over-border-color: var(--color-accent);
+  --dv-tabs-container-scrollbar-color: var(--color-line-strong);
+  --dv-icon-hover-background-color: var(--color-hover);
+  --dv-floating-box-shadow: 0 18px 50px -10px rgb(0 0 0 / 0.7);
+  --dv-overlay-z-index: 999;
+  --dv-tab-font-size: 12px;
+  --dv-border-radius: 6px;
+  --dv-tab-margin: 0;
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--color-accent);
+  --dv-active-sash-transition-duration: 0.1s;
+  --dv-active-sash-transition-delay: 0.3s;
+  --dv-group-view-background-color: var(--color-panel);
+  --dv-tabs-and-actions-container-background-color: var(--color-bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--color-panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--color-panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--color-fg);
+  --dv-activegroup-hiddenpanel-tab-color: var(--color-muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--color-dim);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--color-muted);
+  --dv-separator-border: transparent;
+  --dv-paneview-header-border-color: var(--color-line);
+  --dv-scrollbar-background-color: var(--color-line-strong);
+  background-color: var(--color-bg);
+  padding: 6px;
+}
+.dockview-theme-scanner .dv-groupview {
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.dockview-theme-scanner .dv-groupview.dv-active-group {
+  border-color: var(--color-line-strong);
+}
+.dockview-theme-scanner .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--color-line);
+}
+.dockview-theme-scanner .dv-tab {
+  padding: 0 4px 0 10px;
+}
+.dockview-theme-scanner .dv-groupview.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}

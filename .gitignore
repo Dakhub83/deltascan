@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.log
+
+# Secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Local SQLite data (layouts, reference data cache, alert history)
+data/
+
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
