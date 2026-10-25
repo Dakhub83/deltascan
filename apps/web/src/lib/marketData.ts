@@ -1,8 +1,9 @@
-import type { Alert, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
+import type { Alert, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
 
 export type RowsListener = (changed: SymbolSnapshot[], reset: boolean) => void;
 export type AlertsListener = (added: Alert[], reset: boolean) => void;
+export type HaltsListener = (changed: HaltEvent[], reset: boolean) => void;
 
 const MAX_ALERTS = 1_000;
 const HISTORY_POINTS = 600; // 10 minutes at 1 sample/sec
@@ -21,11 +22,15 @@ class MarketDataClient {
   /** Newest first. */
   alerts: Alert[] = [];
   readonly history = new Map<string, number[]>();
+  /** Today's halts by id; the server re-sends a halt whenever it changes. */
+  readonly halts = new Map<string, HaltEvent>();
 
   private readonly rowListeners = new Set<RowsListener>();
   private readonly alertListeners = new Set<AlertsListener>();
+  private readonly haltListeners = new Set<HaltsListener>();
   private pendingRows = new Map<string, SymbolSnapshot>();
   private pendingAlerts: Alert[] = [];
+  private pendingHalts = new Map<string, HaltEvent>();
   private flushScheduled = false;
   private ws: WebSocket | null = null;
   private attempt = 0;
@@ -46,6 +51,11 @@ class MarketDataClient {
   onAlerts(fn: AlertsListener): () => void {
     this.alertListeners.add(fn);
     return () => this.alertListeners.delete(fn);
+  }
+
+  onHalts(fn: HaltsListener): () => void {
+    this.haltListeners.add(fn);
+    return () => this.haltListeners.delete(fn);
   }
 
   private connect(): void {
@@ -74,12 +84,17 @@ class MarketDataClient {
         this.rows.clear();
         for (const s of msg.data.snapshots) this.rows.set(s.symbol, s);
         this.alerts = msg.data.alerts.slice(0, MAX_ALERTS);
+        this.halts.clear();
+        for (const h of msg.data.halts) this.halts.set(h.id, h);
         this.pendingRows.clear();
         this.pendingAlerts = [];
+        this.pendingHalts.clear();
         useUiStore.setState({ provider: msg.data.status });
         const all = [...this.rows.values()];
         this.rowListeners.forEach((fn) => fn(all, true));
         this.alertListeners.forEach((fn) => fn(this.alerts, true));
+        const halts = [...this.halts.values()];
+        this.haltListeners.forEach((fn) => fn(halts, true));
         break;
       }
       case 'snapshots':
@@ -92,6 +107,13 @@ class MarketDataClient {
       case 'alerts':
         // Server sends oldest → newest; keep newest first locally.
         for (const a of msg.data) this.pendingAlerts.unshift(a);
+        this.scheduleFlush();
+        break;
+      case 'halts':
+        for (const h of msg.data) {
+          this.halts.set(h.id, h);
+          this.pendingHalts.set(h.id, h);
+        }
         this.scheduleFlush();
         break;
       case 'status':
@@ -123,6 +145,11 @@ class MarketDataClient {
       this.pendingAlerts = [];
       this.alerts = added.concat(this.alerts).slice(0, MAX_ALERTS);
       this.alertListeners.forEach((fn) => fn(added, false));
+    }
+    if (this.pendingHalts.size) {
+      const changed = [...this.pendingHalts.values()];
+      this.pendingHalts.clear();
+      this.haltListeners.forEach((fn) => fn(changed, false));
     }
   }
 

@@ -6,10 +6,21 @@ import {
   type IDockviewHeaderActionsProps,
   type IDockviewPanelHeaderProps,
 } from 'dockview';
-import { Crosshair, ExternalLink, Maximize2, Minimize2, PictureInPicture2, Siren, SquareSplitHorizontal, X } from 'lucide-react';
+import {
+  Crosshair,
+  ExternalLink,
+  Maximize2,
+  Minimize2,
+  OctagonPause,
+  PictureInPicture2,
+  Siren,
+  SquareSplitHorizontal,
+  X,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { FilterPanel } from '../panels/FilterPanel';
 import { AlertPanel } from '../panels/AlertPanel';
+import { HaltPanel } from '../panels/HaltPanel';
 import { SymbolPanel } from '../panels/SymbolPanel';
 import { PRESETS_BY_ID } from '../scanners/presets';
 import { buildDefaultLayout, requestLayoutSave, restoreLayout, setDockApi } from '../lib/layout';
@@ -21,11 +32,13 @@ const components = {
   filter: FilterPanel,
   alerts: AlertPanel,
   symbol: () => <SymbolPanel />,
+  halts: () => <HaltPanel />,
 };
 
 function iconFor(id: string, params: Record<string, unknown> | undefined) {
   if (id.startsWith('alerts')) return Siren;
   if (id.startsWith('symbol')) return Crosshair;
+  if (id.startsWith('halts')) return OctagonPause;
   return PRESETS_BY_ID.get(String(params?.presetId))?.icon;
 }
 

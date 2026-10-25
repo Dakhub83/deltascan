@@ -39,11 +39,15 @@ const PROFILES: Record<MockProfile, ProfileSpec> = {
 const TICK_INTERVAL_MS = 50;
 const SESSION_SECONDS = 6.5 * 3600;
 const BLOCK_CHANCE = 0.0005;
+/** Pull toward the anchor per trade, in units of the profile's volatility. */
+const MEAN_REVERSION = 1;
 
 // Halts: a burst that moves a small/mid cap this far triggers an LULD pause.
-const HALT_TRIGGER_MOVE = 0.08;
+const HALT_TRIGGER_MOVE = 0.1;
 const MAX_ACTIVE_HALTS = 3;
-const HALT_COOLDOWN_MS = 5 * 60_000;
+const HALT_COOLDOWN_MS = 20 * 60_000;
+/** Market-wide spacing between new halts, so the Halts window gets a steady trickle, not a flood. */
+const MIN_HALT_SPACING_MS = 2 * 60_000;
 const NEWS_HALT_CHANCE = 0.00002;
 /** Quotation-only period before re-opening. */
 const QUOTING_LEAD_MS = 15_000;
@@ -60,6 +64,8 @@ interface Sim {
   meta: MockSymbol;
   spec: ProfileSpec;
   price: number;
+  /** Level the price reverts toward, so bursts and reopen gaps fade instead of compounding. */
+  anchor: number;
   inPlay: boolean;
   avgVolume: number;
   avgTradeSize: number;
@@ -81,6 +87,7 @@ export class MockProvider extends MarketDataProvider {
   private readonly sims = new Map<string, Sim>();
   private timer: NodeJS.Timeout | null = null;
   private seededHalts = false;
+  private lastHaltAt = 0;
 
   constructor(private readonly opts: MockProviderOptions) {
     super();
@@ -147,6 +154,7 @@ export class MockProvider extends MarketDataProvider {
       meta,
       spec,
       price: last,
+      anchor: last,
       inPlay,
       avgVolume,
       avgTradeSize: 0,
@@ -212,6 +220,7 @@ export class MockProvider extends MarketDataProvider {
 
   private startHalt(sim: Sim, at: number, reasonCode: string, dir: 1 | -1): void {
     const duration = this.opts.haltSeconds * 1000 * (reasonCode === 'LUDP' ? 1 : uniform(2, 3));
+    this.lastHaltAt = Math.max(this.lastHaltAt, at);
     sim.halt = { until: at + duration, quotingAt: at + duration - QUOTING_LEAD_MS, quoting: false, reasonCode, dir };
     sim.burst = 0;
     this.emit('tradingStatus', {
@@ -234,7 +243,7 @@ export class MockProvider extends MarketDataProvider {
     if (now < halt.until) return;
 
     // Re-open gaps, usually continuing the move that caused the halt.
-    const dir = Math.random() < 0.65 ? halt.dir : -halt.dir;
+    const dir: 1 | -1 = Math.random() < 0.65 ? halt.dir : halt.dir === 1 ? -1 : 1;
     sim.price *= 1 + dir * uniform(0.01, 0.15);
     sim.halt = null;
     sim.haltCooldownUntil = now + HALT_COOLDOWN_MS;
@@ -283,7 +292,8 @@ export class MockProvider extends MarketDataProvider {
     if (bursting) sim.burst--;
 
     const drift = bursting ? sim.burstDir * spec.vol * 0.5 : 0;
-    sim.price = Math.max(0.05, sim.price * (1 + drift + (Math.random() - 0.5) * 2 * spec.vol));
+    const reversion = -spec.vol * MEAN_REVERSION * Math.log(sim.price / sim.anchor);
+    sim.price = Math.max(0.05, sim.price * (1 + drift + reversion + (Math.random() - 0.5) * 2 * spec.vol));
 
     const tick = sim.price < 1 ? 0.0001 : 0.01;
     const halfSpread = Math.max(tick, (sim.price * spec.spreadBps) / 20_000);
@@ -309,6 +319,7 @@ export class MockProvider extends MarketDataProvider {
     const canHalt =
       (meta.profile === 'micro' || meta.profile === 'mid') &&
       now >= sim.haltCooldownUntil &&
+      now - this.lastHaltAt >= MIN_HALT_SPACING_MS &&
       this.activeHalts() < MAX_ACTIVE_HALTS;
     if (!canHalt) return;
     const burstMove = sim.price / sim.burstStartPrice - 1;

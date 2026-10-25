@@ -1,8 +1,37 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Bell, BellOff, LayoutGrid, Plus, Radar, RotateCcw, Search, Settings2, Siren, Crosshair, Volume2, VolumeX, Zap } from 'lucide-react';
+import {
+  Bell,
+  BellOff,
+  Check,
+  Crosshair,
+  LayoutGrid,
+  OctagonPause,
+  Plus,
+  Radar,
+  RotateCcw,
+  Save,
+  Search,
+  Settings2,
+  Siren,
+  Trash2,
+  Volume2,
+  VolumeX,
+  Zap,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
-import { addAlertWindow, addFilterWindow, addSymbolWindow, resetLayout } from '../lib/layout';
+import {
+  activeLayoutName,
+  addAlertWindow,
+  addFilterWindow,
+  addHaltWindow,
+  addSymbolWindow,
+  deleteLayout,
+  listLayouts,
+  loadLayout,
+  resetLayout,
+  saveLayoutAs,
+} from '../lib/layout';
 import { fmtPct, fmtPrice, signClass } from '../lib/format';
 import { playTone } from '../lib/alertEffects';
 import { ALERT_META } from '../lib/alertMeta';
@@ -145,9 +174,112 @@ function NewWindowMenu() {
             <Siren className="size-3.5 text-warn" />
             Alert window
           </MenuItem>
+          <MenuItem onClick={() => (addHaltWindow(), close())}>
+            <OctagonPause className="size-3.5 text-warn" />
+            Halts
+          </MenuItem>
           <MenuItem onClick={() => (addSymbolWindow(), close())}>
             <Crosshair className="size-3.5 text-cyan" />
             Symbol detail
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+function LayoutMenu() {
+  const [, refresh] = useState(0);
+  const [name, setName] = useState('');
+  const layouts = listLayouts();
+  const active = activeLayoutName();
+  const exists = layouts.some((l) => l.name === name.trim());
+  const bump = () => refresh((n) => n + 1);
+
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (saveLayoutAs(name)) {
+      setName('');
+      bump();
+    }
+  };
+
+  return (
+    <Popover
+      align="right"
+      trigger={(open) => (
+        <IconButton title="Layouts" active={open}>
+          <LayoutGrid className="size-4" />
+        </IconButton>
+      )}
+    >
+      {(close) => (
+        <div className="w-64">
+          <MenuLabel>Saved layouts</MenuLabel>
+          {layouts.length === 0 && <div className="px-2.5 py-1.5 text-[11px] text-muted">None yet. Save your current windows below.</div>}
+          {layouts.map((l) => (
+            <div key={l.name} className="group flex items-center rounded-md hover:bg-hover">
+              <button
+                type="button"
+                onClick={() => {
+                  loadLayout(l.name);
+                  close();
+                }}
+                className={clsx('flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left text-[12px]', l.name === active ? 'text-fg' : 'text-dim hover:text-fg')}
+                title={`Open "${l.name}"`}
+              >
+                <Check className={clsx('size-3.5 shrink-0', l.name === active ? 'text-accent' : 'invisible')} />
+                <span className="truncate">{l.name}</span>
+              </button>
+              <IconButton
+                title={`Update "${l.name}" with the current windows`}
+                onClick={() => {
+                  saveLayoutAs(l.name);
+                  bump();
+                }}
+                className="opacity-0 group-hover:opacity-100"
+              >
+                <Save className="size-3.5" />
+              </IconButton>
+              <IconButton
+                title={`Delete "${l.name}"`}
+                onClick={() => {
+                  if (!window.confirm(`Delete the layout "${l.name}"?`)) return;
+                  deleteLayout(l.name);
+                  bump();
+                }}
+                className="mr-1 opacity-0 group-hover:opacity-100 hover:text-down"
+              >
+                <Trash2 className="size-3.5" />
+              </IconButton>
+            </div>
+          ))}
+          <div className="my-1 h-px bg-line" />
+          <form onSubmit={save} className="flex items-center gap-1.5 px-1.5 py-1">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Save current as…"
+              maxLength={40}
+              className="h-7 min-w-0 flex-1 rounded-md border border-line bg-panel px-2 text-[12px] text-fg outline-none placeholder:text-muted focus:border-accent/60"
+            />
+            <button
+              type="submit"
+              disabled={!name.trim()}
+              className="h-7 rounded-md bg-accent px-2.5 text-[12px] font-medium text-white transition-opacity disabled:opacity-40"
+            >
+              {exists ? 'Replace' : 'Save'}
+            </button>
+          </form>
+          <div className="my-1 h-px bg-line" />
+          <MenuItem
+            onClick={() => {
+              resetLayout();
+              close();
+            }}
+          >
+            <RotateCcw className="size-3.5" />
+            Default layout
           </MenuItem>
         </div>
       )}
@@ -257,9 +389,7 @@ export function TopBar() {
           <IconButton title={notifications ? 'Notifications on' : 'Notifications off'} active={notifications}>
             {notifications ? <Bell className="size-4" /> : <BellOff className="size-4" />}
           </IconButton>
-          <IconButton title="Reset layout" onClick={resetLayout}>
-            <LayoutGrid className="size-4" />
-          </IconButton>
+          <LayoutMenu />
           <SettingsMenu />
         </div>
       </div>

@@ -42,22 +42,21 @@ npm run typecheck    # all workspaces
 - **Mock**: simulated LULD halts (a burst of ≥ 8 %) and news halts (T1), a quoting phase, a reopen gap, seeded earlier halts, and `MOCK_HALT_SECONDS`.
 - `IngestionService` and `ClientGateway` accept a `HaltTracker` and forward the data.
 
-### Still to do (in order)
-1. **Fix the server typecheck.** `apps/server/src/index.ts` hasn't been updated:
-   - create `const halts = new HaltTracker({ onHalt, onResume })`, wiring `onHalt` / `onResume` to `alerts.raise('halt' | 'resume', …)`
-   - pass `halts` to `new IngestionService(env, store, alerts, halts, logger, …)`, which currently breaks the argument order
-   - pass `halts` to `ClientGateway`
-   - add `setInterval(() => store.sampleMomentum(), 1_000)` and clear it in `shutdown()`
-2. **Fix the mock typecheck.** At `MockProvider.ts:242`, `sim.burstDir = dir` is typed as `number`. Type `dir` as `1 | -1` in `advanceHalt`.
-3. **Fix the web typecheck.** `apps/web/src/lib/alertMeta.ts` needs `halt` and `resume` entries.
-4. **Web UI:**
-   - handle `hello.halts` and the `halts` message in `lib/marketData.ts`
-   - add a **Halts window** panel (symbol, reason, direction, halted at, countdown to `expectedResumeAt`, halt %, resume gap %) and register it in **+ Window**
-   - add `chg1mPct` / `chg5mPct` columns and a halted badge in `scanners/columns.ts` / `cells.tsx`, and possibly a momentum preset in `presets.ts`
-5. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev` (a halt should appear in the mock within a few minutes; one is seeded live at startup), then commit.
-6. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
+- `src/index.ts` wires `HaltTracker` in (halt / resume alerts via `alerts.raise`, the countdown uses `MOCK_HALT_SECONDS` on mock) and samples momentum every second.
+- **Web**: `marketData` keeps `halts` (`onHalts` listener); `panels/HaltPanel.tsx` is in **+ Window → Halts** and is a tab next to Alerts in the default layout (a saved layout needs **Reset layout** to pick it up); HALT / RESUME chips in `alertMeta.ts`.
+- `Popover` portals to the document body and scrolls, so the dropdowns are no longer clipped by dockview panels.
+- **Mock price model**: prices mean-revert toward their seeded level (`MEAN_REVERSION`). Before this, prices compounded without limit (+10,000% within 40 min). Halts are spaced at least 2 min apart market-wide (`MIN_HALT_SPACING_MS`).
 
-Status when we stopped: **tests pass (17/17); typecheck fails** for the reasons in items 1–3.
+- **Momentum scanner** (`presets.ts`, thresholds in `MOMENTUM`): a multi-strategy filter (up ≥ 5 %, RVOL ≥ 2×, within 2 % of HOD, rising over 5 m, not halted), sorted by 5m %. New columns are `chg1mPct`, `chg5mPct` and `tier` (SUB $1 / LOW FLT / LARGE, thresholds in `TIERS` in `columns.ts`), plus a HALT badge in the Symbol cell. On the 56-symbol mock it usually shows 0–3 rows, because most movers have pulled back from their HOD.
+
+- **Named layouts**: the Layouts menu (grid icon, top right) saves, opens, updates and deletes them, and replaces the old reset button. They're stored in `localStorage` (`deltascan.layouts.v1`) through `saveLayoutAs` / `loadLayout` / `deleteLayout` in `lib/layout.ts`. That's per browser; moving them to SQLite is part of ARCHITECTURE step 10.
+
+### Still to do (in order)
+1. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev`, then merge into `main`.
+2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
+3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
+
+Status: **tests pass (17/17), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).

@@ -190,7 +190,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
             )}
           >
             {() => (
-              <div className="max-h-80 overflow-y-auto">
+              <div>
                 <MenuLabel>Columns</MenuLabel>
                 {ALL_COLUMN_IDS.filter((id) => id !== 'symbol').map((id) => (
                   <MenuItem key={id} onClick={() => toggleColumn(id)} active={visibleCols.has(id)}>

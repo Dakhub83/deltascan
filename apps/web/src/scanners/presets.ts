@@ -1,5 +1,5 @@
 import type { SymbolSnapshot } from '@deltascan/shared';
-import { Gauge, List, Rocket, Sunrise, Target, TrendingDown, TrendingUp, Waves, type LucideIcon } from 'lucide-react';
+import { Gauge, List, Rocket, Sunrise, Target, TrendingDown, TrendingUp, Waves, Zap, type LucideIcon } from 'lucide-react';
 import { derived, type ColumnId } from './columns';
 
 export interface ScannerPreset {
@@ -14,7 +14,25 @@ export interface ScannerPreset {
 
 const n = (v: number | null | undefined) => v ?? Number.NaN;
 
+/** Multi-strategy momentum scan: every condition must hold. */
+export const MOMENTUM = { minChangePct: 5, minRvol: 2, maxHodDistPct: 2, min5mPct: 0 };
+
 export const PRESETS: ScannerPreset[] = [
+  {
+    id: 'momentum',
+    title: 'Momentum',
+    description: `Up ≥ ${MOMENTUM.minChangePct}%, RVOL ≥ ${MOMENTUM.minRvol}×, within ${MOMENTUM.maxHodDistPct}% of HOD, rising over 5m`,
+    icon: Zap,
+    filter: (s) =>
+      !s.halted &&
+      n(s.changePct) >= MOMENTUM.minChangePct &&
+      n(s.rvol) >= MOMENTUM.minRvol &&
+      n(derived.hodDistPct(s)) <= MOMENTUM.maxHodDistPct &&
+      n(s.chg5mPct) > MOMENTUM.min5mPct,
+    // Ranked by what's moving now, not by who ran earlier in the day.
+    sort: { colId: 'chg5mPct', sort: 'desc' },
+    columns: ['symbol', 'tier', 'last', 'chg1mPct', 'chg5mPct', 'changePct', 'rvol', 'floatShares', 'hodDistPct', 'volume'],
+  },
   {
     id: 'top-gainers',
     title: 'Top Gainers',

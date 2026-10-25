@@ -1,7 +1,7 @@
 import type { ColDef, ValueGetterParams } from 'ag-grid-community';
 import type { SymbolSnapshot } from '@deltascan/shared';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
-import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, SymbolCell } from './cells';
+import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, SymbolCell, TierCell, type Tier } from './cells';
 
 type Col = ColDef<SymbolSnapshot>;
 type Getter = (s: SymbolSnapshot) => number | null;
@@ -17,6 +17,16 @@ export const derived = {
   dollarVolume: (s) => (s.vwap != null ? s.vwap * s.volume : null),
 } satisfies Record<string, Getter>;
 
+/** Tier thresholds; checked in this order, so a sub-$1 low-float stock is tagged sub-$1. */
+export const TIERS = { subDollarBelow: 1, lowFloatBelow: 20e6, largeCapAbove: 10e9 };
+
+export function tierOf(s: SymbolSnapshot): Tier | null {
+  if (s.last != null && s.last < TIERS.subDollarBelow) return 'sub-dollar';
+  if (s.floatShares != null && s.floatShares < TIERS.lowFloatBelow) return 'low-float';
+  if (s.marketCap != null && s.marketCap > TIERS.largeCapAbove) return 'large-cap';
+  return null;
+}
+
 const getter = (fn: Getter) => (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? fn(p.data) : null);
 
 const num: Partial<Col> = { type: 'rightAligned', cellClass: 'num', sortingOrder: ['desc', 'asc', null] };
@@ -24,13 +34,19 @@ const pctFmt = { valueFormatter: (p: { value: number | null }) => fmtPct(p.value
 
 export const COLUMNS = {
   symbol: {
-    colId: 'symbol', field: 'symbol', headerName: 'Symbol', pinned: 'left', width: 92, cellRenderer: SymbolCell,
+    colId: 'symbol', field: 'symbol', headerName: 'Symbol', pinned: 'left', width: 116, cellRenderer: SymbolCell,
     sortingOrder: ['asc', 'desc', null], lockPinned: true,
   },
   name: { colId: 'name', field: 'name', headerName: 'Company', width: 150, cellClass: 'text-dim' },
   sector: { colId: 'sector', field: 'sector', headerName: 'Sector', width: 110, cellClass: 'text-dim' },
   last: { ...num, colId: 'last', field: 'last', headerName: 'Price', width: 82, cellRenderer: PriceCell },
   changePct: { ...num, colId: 'changePct', field: 'changePct', headerName: 'Chg %', width: 86, cellRenderer: ChangeCell },
+  chg1mPct: { ...num, ...pctFmt, colId: 'chg1mPct', field: 'chg1mPct', headerName: '1m %', width: 72, cellClassRules: signRules() },
+  chg5mPct: { ...num, ...pctFmt, colId: 'chg5mPct', field: 'chg5mPct', headerName: '5m %', width: 72, cellClassRules: signRules() },
+  tier: {
+    colId: 'tier', headerName: 'Type', width: 78, sortable: false,
+    valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? tierOf(p.data) : null), cellRenderer: TierCell,
+  },
   gapPct: { ...num, ...pctFmt, colId: 'gapPct', field: 'gapPct', headerName: 'Gap %', width: 78, cellClassRules: signRules() },
   fromOpenPct: {
     ...num, ...pctFmt, colId: 'fromOpenPct', headerName: 'From Open', width: 86,

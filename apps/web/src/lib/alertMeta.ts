@@ -1,5 +1,15 @@
 import type { AlertType } from '@deltascan/shared';
-import { ArrowDownToLine, ArrowUpToLine, Blocks, ChevronsDown, ChevronsUp, Flame, type LucideIcon } from 'lucide-react';
+import {
+  ArrowDownToLine,
+  ArrowUpToLine,
+  Blocks,
+  ChevronsDown,
+  ChevronsUp,
+  Flame,
+  Pause,
+  Play,
+  type LucideIcon,
+} from 'lucide-react';
 
 export interface AlertMeta {
   label: string;
@@ -61,5 +71,21 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     text: 'text-accent',
     badge: 'bg-accent/12 text-accent ring-accent/25',
     tone: [523, 784, 1046],
+  },
+  halt: {
+    label: 'Trading Halt',
+    short: 'HALT',
+    icon: Pause,
+    text: 'text-warn',
+    badge: 'bg-warn/12 text-warn ring-warn/25',
+    tone: [392, 392, 392],
+  },
+  resume: {
+    label: 'Halt Resumed',
+    short: 'RESUME',
+    icon: Play,
+    text: 'text-up',
+    badge: 'bg-up/12 text-up ring-up/25',
+    tone: [523, 659, 784],
   },
 };
