@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   Bell,
   BellOff,
+  ChartCandlestick,
   Check,
   Crosshair,
   LayoutGrid,
@@ -18,11 +19,13 @@ import {
   VolumeX,
   Zap,
 } from 'lucide-react';
+import type { MarketSession } from '@deltascan/shared';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
 import {
   activeLayoutName,
   addAlertWindow,
+  addChartWindow,
   addFilterWindow,
   addHaltWindow,
   addSymbolWindow,
@@ -60,6 +63,14 @@ const etClock = new Intl.DateTimeFormat('en-US', {
 });
 const etParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', weekday: 'short', hourCycle: 'h23' });
 
+const SESSION_LABELS: Record<MarketSession, { label: string; cls: string }> = {
+  pre: { label: 'Pre-market', cls: 'text-warn' },
+  regular: { label: 'Market open', cls: 'text-up' },
+  post: { label: 'After hours', cls: 'text-violet' },
+  closed: { label: 'Closed', cls: 'text-muted' },
+};
+
+/** Wall-clock fallback until the server reports its session. */
 function sessionLabel(now: number): { label: string; cls: string } {
   const parts = Object.fromEntries(etParts.formatToParts(now).map((p) => [p.type, p.value]));
   const mins = Number(parts.hour) * 60 + Number(parts.minute);
@@ -134,10 +145,11 @@ function IndexStrip() {
 
 function ClockAndSession() {
   const now = useSecondTick();
-  const session = sessionLabel(now);
+  const serverSession = useUiStore((s) => s.session);
+  const session = serverSession ? SESSION_LABELS[serverSession] : sessionLabel(now);
   return (
     <div className="hidden items-center gap-2 md:flex">
-      <span className={clsx('text-[11px] font-medium', session.cls)}>{session.label}</span>
+      <span className={clsx('text-[11px] font-medium whitespace-nowrap', session.cls)}>{session.label}</span>
       <span className="num text-[12px] text-dim">{etClock.format(now)} ET</span>
     </div>
   );
@@ -170,6 +182,10 @@ function NewWindowMenu() {
           ))}
           <div className="my-1 h-px bg-line" />
           <MenuLabel>Tools</MenuLabel>
+          <MenuItem onClick={() => (addChartWindow(), close())}>
+            <ChartCandlestick className="size-3.5 text-up" />
+            Chart
+          </MenuItem>
           <MenuItem onClick={() => (addAlertWindow(), close())}>
             <Siren className="size-3.5 text-warn" />
             Alert window

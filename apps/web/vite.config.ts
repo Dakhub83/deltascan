@@ -11,6 +11,7 @@ export default defineConfig({
     proxy: {
       '/ws': { target: `ws://localhost:${SERVER_PORT}`, ws: true },
       '/health': `http://localhost:${SERVER_PORT}`,
+      '/api': `http://localhost:${SERVER_PORT}`,
     },
   },
 });

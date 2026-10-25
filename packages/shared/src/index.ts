@@ -32,7 +32,9 @@ export interface Bar {
   volume: number;
   vwap?: number;
   tradeCount?: number;
+  /** Bar start time (1-minute bars start on the minute). */
   timestamp: EpochMs;
+  session?: TradeSession;
 }
 
 /** Slow-moving per-symbol data (refreshed daily): fundamentals and volume baselines. */
@@ -48,16 +50,33 @@ export interface ReferenceData {
 }
 
 /** Today's session state up to "now", used to seed the cache before streaming starts. */
+/** US equities sessions in ET: pre 04:00–09:30, regular 09:30–16:00, post 16:00–20:00. */
+export type MarketSession = 'pre' | 'regular' | 'post' | 'closed';
+/** The session a trade belongs to (a print outside 04:00–20:00 counts as pre or post). */
+export type TradeSession = Exclude<MarketSession, 'closed'>;
+
 export interface SessionSeed {
   symbol: string;
   prevClose: number;
-  open: number;
+  /** Regular-session fields; null before the 09:30 open. */
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  last: number;
+  volume: number;
+  vwap: number | null;
+  tradeCount?: number;
+  /** Today's 16:00 close, once the regular session has ended. */
+  close?: number;
+  pre?: ExtendedSessionSeed;
+  post?: ExtendedSessionSeed;
+}
+
+export interface ExtendedSessionSeed {
+  volume: number;
   high: number;
   low: number;
   last: number;
-  volume: number;
-  vwap: number;
-  tradeCount?: number;
 }
 
 /** Live per-symbol state maintained by the server's in-memory cache. */
@@ -89,6 +108,19 @@ export interface SymbolSnapshot {
   chg1mPct: number | null;
   chg5mPct: number | null;
   halted: boolean;
+  /** Pre-market (04:00–09:30 ET). `preChangePct` is the last pre-market print vs prevClose. */
+  preVolume: number;
+  preHigh: number | null;
+  preLow: number | null;
+  preLast: number | null;
+  preChangePct: number | null;
+  /** Today's 16:00 close: the last regular-session print. */
+  regularClose: number | null;
+  /** After hours (16:00–20:00 ET). `postChangePct` is vs `regularClose`. */
+  postVolume: number;
+  postHigh: number | null;
+  postLow: number | null;
+  postChangePct: number | null;
   lastTradeAt: EpochMs | null;
   updatedAt: EpochMs;
 }
@@ -179,6 +211,8 @@ export interface ServerStats {
   tradesPerSec: number;
   quotesPerSec: number;
   symbols: number;
+  /** The session the server is classifying trades into (simulated on the mock feed). */
+  session: MarketSession;
 }
 
 export type ServerMessage =
@@ -189,12 +223,20 @@ export type ServerMessage =
         alerts: Alert[];
         halts: HaltEvent[];
         status: ProviderStatus | null;
+        session: MarketSession;
         serverTime: EpochMs;
       };
     }
   | { type: 'snapshots'; data: SymbolSnapshot[] }
+  /** Latest 1-minute bar of each symbol the client charts (see ClientMessage 'chart'). */
+  | { type: 'bars'; data: Bar[] }
   | { type: 'alerts'; data: Alert[] }
   /** New or updated halts (upsert by id). */
   | { type: 'halts'; data: HaltEvent[] }
   | { type: 'status'; data: ProviderStatus }
   | { type: 'stats'; data: ServerStats };
+
+/** Browser → server. */
+export type ClientMessage =
+  /** Replaces the set of symbols this client receives live 1-minute bars for. */
+  { type: 'chart'; symbols: string[] };

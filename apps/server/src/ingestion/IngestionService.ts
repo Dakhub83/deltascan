@@ -34,9 +34,10 @@ export class IngestionService {
       this.prior.low = before?.low ?? null;
       this.prior.last = before?.last ?? null;
       this.prior.vwap = before?.vwap ?? null;
-      this.store.applyTrade(t);
+      const session = this.store.applyTrade(t);
       const after = this.store.get(t.symbol);
-      if (after) this.alerts.onTrade(t, this.prior, after);
+      // NHOD / NLOD / VWAP alerts are defined against the regular session.
+      if (after && session === 'regular') this.alerts.onTrade(t, this.prior, after);
       this.halts.onTrade(t);
     });
     this.provider.on('tradingStatus', (s) => {
@@ -48,6 +49,7 @@ export class IngestionService {
       this.store.applyQuote(q);
     });
     this.provider.on('bar', (b) => this.store.applyBar(b));
+    this.provider.on('history', (symbol, bars) => this.store.applyHistory(symbol, bars));
     this.provider.on('seed', (s) => this.store.applySeed(s));
     this.provider.on('reference', (r) => this.store.applyReference(r));
     this.provider.on('status', (s) => {
@@ -68,10 +70,10 @@ export class IngestionService {
   }
 
   /** Throughput since the previous call. */
-  takeStats(): ServerStats {
+  takeStats(): Omit<ServerStats, 'session'> {
     const now = Date.now();
     const secs = Math.max(0.001, (now - this.windowStart) / 1000);
-    const stats: ServerStats = {
+    const stats = {
       symbols: this.provider.symbols.length,
       tradesPerSec: Math.round(this.counts.trades / secs),
       quotesPerSec: Math.round(this.counts.quotes / secs),
@@ -106,6 +108,7 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
         logger,
         ticksPerSecond: env.MOCK_TICKS_PER_SECOND,
         startFraction: env.MOCK_SESSION_START,
+        session: env.MOCK_SESSION,
         haltSeconds: env.MOCK_HALT_SECONDS,
       });
   }

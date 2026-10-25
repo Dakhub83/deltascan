@@ -7,6 +7,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from 'dockview';
 import {
+  ChartCandlestick,
   Crosshair,
   ExternalLink,
   Maximize2,
@@ -21,6 +22,7 @@ import clsx from 'clsx';
 import { FilterPanel } from '../panels/FilterPanel';
 import { AlertPanel } from '../panels/AlertPanel';
 import { HaltPanel } from '../panels/HaltPanel';
+import { ChartPanel } from '../panels/ChartPanel';
 import { SymbolPanel } from '../panels/SymbolPanel';
 import { PRESETS_BY_ID } from '../scanners/presets';
 import { buildDefaultLayout, requestLayoutSave, restoreLayout, setDockApi } from '../lib/layout';
@@ -33,12 +35,14 @@ const components = {
   alerts: AlertPanel,
   symbol: () => <SymbolPanel />,
   halts: () => <HaltPanel />,
+  chart: ChartPanel,
 };
 
 function iconFor(id: string, params: Record<string, unknown> | undefined) {
   if (id.startsWith('alerts')) return Siren;
   if (id.startsWith('symbol')) return Crosshair;
   if (id.startsWith('halts')) return OctagonPause;
+  if (id.startsWith('chart')) return ChartCandlestick;
   return PRESETS_BY_ID.get(String(params?.presetId))?.icon;
 }
 

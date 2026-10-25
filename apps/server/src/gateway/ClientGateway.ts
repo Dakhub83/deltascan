@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { ProviderStatus, ServerMessage } from '@deltascan/shared';
+import type { Bar, ClientMessage, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
@@ -13,7 +13,8 @@ export interface ClientGatewayOptions {
   alerts: AlertEngine;
   halts: HaltTracker;
   getStatus: () => ProviderStatus | null;
-  getStats: () => { tradesPerSec: number; quotesPerSec: number; symbols: number };
+  getStats: () => ServerStats;
+  getSession: () => MarketSession;
   logger: Logger;
 }
 
@@ -24,7 +25,12 @@ const STATS_INTERVAL_MS = 1_000;
 interface Client {
   ws: WebSocket;
   needsResync: boolean;
+  /** Symbols this client has a chart open for; they get live 1-minute bars. */
+  charts: Set<string>;
 }
+
+/** Caps a client's chart subscriptions so a bad message can't make every flush fan out. */
+const MAX_CHARTS_PER_CLIENT = 50;
 
 /**
  * Pushes batched deltas to UI clients over WebSocket (`/ws`).
@@ -41,9 +47,16 @@ export class ClientGateway {
   constructor(private readonly opts: ClientGatewayOptions) {
     this.log = opts.logger.child({ component: 'gateway' });
     this.http = createServer((req, res) => {
-      if (req.url === '/health') {
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      if (url.pathname === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
+        return;
+      }
+      if (url.pathname === '/api/bars') {
+        const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(opts.store.getBars(symbol)));
         return;
       }
       res.writeHead(404).end();
@@ -74,7 +87,7 @@ export class ClientGateway {
   }
 
   private onConnection(ws: WebSocket): void {
-    const client: Client = { ws, needsResync: false };
+    const client: Client = { ws, needsResync: false, charts: new Set() };
     this.clients.add(client);
     this.log.info({ clients: this.clients.size }, 'client connected');
     this.sendHello(client);
@@ -84,6 +97,20 @@ export class ClientGateway {
       this.log.info({ clients: this.clients.size }, 'client disconnected');
     });
     ws.on('error', (err) => this.log.warn({ err: err.message }, 'client socket error'));
+    ws.on('message', (raw) => this.onClientMessage(client, raw.toString()));
+  }
+
+  private onClientMessage(client: Client, raw: string): void {
+    let msg: ClientMessage;
+    try {
+      msg = JSON.parse(raw) as ClientMessage;
+    } catch {
+      return;
+    }
+    if (msg.type === 'chart' && Array.isArray(msg.symbols)) {
+      const symbols = msg.symbols.filter((s): s is string => typeof s === 'string').slice(0, MAX_CHARTS_PER_CLIENT);
+      client.charts = new Set(symbols.map((s) => s.toUpperCase()));
+    }
   }
 
   private sendHello(client: Client): void {
@@ -94,6 +121,7 @@ export class ClientGateway {
         alerts: this.opts.alerts.recent(),
         halts: this.opts.halts.recent(),
         status: this.opts.getStatus(),
+        session: this.opts.getSession(),
         serverTime: Date.now(),
       },
     };
@@ -106,8 +134,22 @@ export class ClientGateway {
     const alerts = this.opts.alerts.drain();
     const halts = this.opts.halts.drain();
     if (snapshots.length) this.broadcast({ type: 'snapshots', data: snapshots });
+    if (snapshots.length) this.sendChartBars(snapshots.map((s) => s.symbol));
     if (halts.length) this.broadcast({ type: 'halts', data: halts });
     if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
+  }
+
+  /** Live bar updates go only to clients charting that symbol. */
+  private sendChartBars(changed: string[]): void {
+    for (const client of this.clients) {
+      if (!client.charts.size || client.needsResync || client.ws.readyState !== WebSocket.OPEN) continue;
+      const bars: Bar[] = [];
+      for (const symbol of changed) {
+        const bar = client.charts.has(symbol) ? this.opts.store.lastBar(symbol) : undefined;
+        if (bar) bars.push({ ...bar });
+      }
+      if (bars.length) client.ws.send(JSON.stringify({ type: 'bars', data: bars } satisfies ServerMessage));
+    }
   }
 
   private broadcast(msg: ServerMessage): void {

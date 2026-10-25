@@ -5,18 +5,22 @@ import { IngestionService } from './ingestion/IngestionService';
 import { AlertEngine } from './scanner/AlertEngine';
 import { HaltTracker } from './scanner/HaltTracker';
 import { ClientGateway } from './gateway/ClientGateway';
-import { mockSessionFraction, regularSessionFraction } from './market/sessionClock';
+import { marketSessionAt, mockSessionFraction, regularSessionFraction, tradeSessionAt } from './market/sessionClock';
 
 const STATS_LOG_INTERVAL_MS = 30_000;
 
+const mock = env.DATA_PROVIDER === 'mock';
+// The mock simulates one session regardless of the wall clock.
+const mockFraction = env.MOCK_SESSION === 'post' ? () => 1 : mockSessionFraction(env.MOCK_SESSION_START);
 const store = new SymbolStore({
-  sessionFraction:
-    env.DATA_PROVIDER === 'mock' ? mockSessionFraction(env.MOCK_SESSION_START) : regularSessionFraction,
+  sessionFraction: mock ? mockFraction : regularSessionFraction,
+  sessionOf: mock ? () => env.MOCK_SESSION : tradeSessionAt,
 });
+const currentSession = () => (mock ? env.MOCK_SESSION : marketSessionAt(Date.now()));
 const alerts = new AlertEngine();
 const halts = new HaltTracker({
   // The mock shortens LULD pauses; keep the Halts window countdown honest.
-  luldPauseMs: env.DATA_PROVIDER === 'mock' ? env.MOCK_HALT_SECONDS * 1000 : undefined,
+  luldPauseMs: mock ? env.MOCK_HALT_SECONDS * 1000 : undefined,
   onHalt: (h) =>
     alerts.raise(
       'halt',
@@ -49,7 +53,8 @@ gateway = new ClientGateway({
   alerts,
   halts,
   getStatus: () => ingestion.status,
-  getStats: () => lastStats,
+  getStats: () => ({ ...lastStats, session: currentSession() }),
+  getSession: currentSession,
   logger,
 });
 

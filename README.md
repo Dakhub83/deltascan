@@ -43,7 +43,22 @@ npm run typecheck
 - The **scanner dropdown** in a window's toolbar switches the scan. The **columns** button shows or hides columns. Drag headers to reorder.
 - **Clicking a row** selects that symbol everywhere and loads it in the Symbol panel. Arrow keys also work.
 - **Alert chips** filter by type. The speaker on each chip turns that type's sound on or off. The first sound plays after your first click on the page, because browsers block audio before that.
-- Layout, column setup and settings are saved automatically. **Reset layout** is in the top-right of the top bar.
+- Layout, column setup and settings are saved automatically. The **Layouts** menu (grid icon, top right) saves named layouts and resets to the default.
+
+### Charts
+
+**+ Window → Chart** opens a candlestick chart. It's also a tab next to Symbol in the default layout, and it uses [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts).
+- **Symbol:** the chart follows the symbol you select in any scanner or alert window. Click the link icon to pin it to its current symbol, or type a ticker in its symbol box.
+- **Timeframes:** 1m, 5m, 15m and 1h.
+- **Indicators:** VWAP (regular session, resets daily), EMA 9, EMA 20 and volume.
+- **Ext hrs:** shows or hides pre-market and after-hours bars. When shown, they're drawn faded.
+- **Readout:** hovering shows that bar's open, high, low and close, its % change and the indicator values.
+
+### Pre-market and after-hours scanners
+
+**Pre-market Gainers** ranks stocks by their move before the 9:30 open. **After-hours Movers** ranks them by their move since the 4 pm close. On live data they fill in during those hours (4:00–9:30 and 16:00–20:00 ET). To try them on simulated data at any time, set `MOCK_SESSION=pre` or `MOCK_SESSION=post` in `.env` and restart `npm run dev`.
+
+Outside regular hours, scans built on the regular session (Gap Ups, RVOL, HOD, VWAP) and their alerts stay quiet, because those numbers only count 9:30–16:00 trading.
 
 ## Using live Alpaca data
 

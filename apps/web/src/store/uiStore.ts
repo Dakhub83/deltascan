@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AlertType, ProviderStatus, ServerStats } from '@deltascan/shared';
+import type { AlertType, MarketSession, ProviderStatus, ServerStats } from '@deltascan/shared';
 
 export type SocketState = 'connecting' | 'open' | 'closed';
 
@@ -17,6 +17,8 @@ interface UiState {
   socket: SocketState;
   provider: ProviderStatus | null;
   stats: ServerStats | null;
+  /** Session reported by the server (simulated on the mock feed); null until connected. */
+  session: MarketSession | null;
   lastMessageAt: number | null;
   selectedSymbol: string | null;
   settings: Settings;
@@ -30,6 +32,7 @@ export const useUiStore = create<UiState>()(
       socket: 'connecting',
       provider: null,
       stats: null,
+      session: null,
       lastMessageAt: null,
       selectedSymbol: null,
       settings: {

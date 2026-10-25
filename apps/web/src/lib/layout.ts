@@ -132,6 +132,10 @@ export function addSymbolWindow(): void {
   api?.addPanel({ id: `symbol-${uid()}`, component: 'symbol', title: 'Symbol', params: {}, floating: { ...floating(), width: 380, height: 520 } });
 }
 
+export function addChartWindow(): void {
+  api?.addPanel({ id: `chart-${uid()}`, component: 'chart', title: 'Chart', params: {}, floating: { ...floating(), width: 820, height: 480 } });
+}
+
 export function addHaltWindow(): void {
   api?.addPanel({ id: `halts-${uid()}`, component: 'halts', title: 'Halts', params: {}, floating: { ...floating(), width: 760, height: 320 } });
 }
@@ -181,6 +185,15 @@ export function buildDefaultLayout(): void {
     position: { referencePanel: 'alerts', direction: 'below' },
   });
 
+  const chart = api.addPanel({
+    id: 'chart',
+    component: 'chart',
+    title: 'Chart',
+    params: {},
+    position: { referencePanel: 'symbol', direction: 'within' },
+  });
+
+  chart.api.setActive();
   gainers.api.setActive();
   runners.api.setActive();
 

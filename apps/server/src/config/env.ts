@@ -52,6 +52,7 @@ const schema = z
 
     MOCK_TICKS_PER_SECOND: int(200),
     MOCK_SESSION_START: z.coerce.number().min(0).max(1).default(0.35),
+    MOCK_SESSION: z.enum(['pre', 'regular', 'post']).default('regular'),
     MOCK_HALT_SECONDS: int(90),
 
     DB_PATH: z.string().default('./data/scanner.db'),

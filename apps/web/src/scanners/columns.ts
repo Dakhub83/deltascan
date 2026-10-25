@@ -47,6 +47,15 @@ export const COLUMNS = {
     colId: 'tier', headerName: 'Type', width: 78, sortable: false,
     valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? tierOf(p.data) : null), cellRenderer: TierCell,
   },
+  preChangePct: { ...num, ...pctFmt, colId: 'preChangePct', field: 'preChangePct', headerName: 'PM Chg %', width: 86, cellRenderer: ChangeCell },
+  preVolume: { ...num, colId: 'preVolume', field: 'preVolume', headerName: 'PM Vol', width: 78, valueFormatter: (p) => fmtCompact(p.value) },
+  preHigh: { ...num, colId: 'preHigh', field: 'preHigh', headerName: 'PM High', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },
+  regularClose: {
+    ...num, colId: 'regularClose', field: 'regularClose', headerName: 'Close', width: 78,
+    valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim',
+  },
+  postChangePct: { ...num, ...pctFmt, colId: 'postChangePct', field: 'postChangePct', headerName: 'AH Chg %', width: 86, cellRenderer: ChangeCell },
+  postVolume: { ...num, colId: 'postVolume', field: 'postVolume', headerName: 'AH Vol', width: 78, valueFormatter: (p) => fmtCompact(p.value) },
   gapPct: { ...num, ...pctFmt, colId: 'gapPct', field: 'gapPct', headerName: 'Gap %', width: 78, cellClassRules: signRules() },
   fromOpenPct: {
     ...num, ...pctFmt, colId: 'fromOpenPct', headerName: 'From Open', width: 86,

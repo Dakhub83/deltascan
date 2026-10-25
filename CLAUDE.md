@@ -51,6 +51,15 @@ npm run typecheck    # all workspaces
 
 - **Named layouts**: the Layouts menu (grid icon, top right) saves, opens, updates and deletes them, and replaces the old reset button. They're stored in `localStorage` (`deltascan.layouts.v1`) through `saveLayoutAs` / `loadLayout` / `deleteLayout` in `lib/layout.ts`. That's per browser; moving them to SQLite is part of ARCHITECTURE step 10.
 
+- **Extended hours**: `sessionClock.tradeSessionAt` / `marketSessionAt` classify by ET time (holidays aren't modelled). `SymbolStore` books pre/post prints into `pre*` / `post*` fields and `regularClose`. Those prints move `last` and `changePct` but not the regular open/high/low/volume/VWAP. NHOD / NLOD / VWAP alerts only run on regular prints. The session reaches the UI through `hello` and `stats`. The scanners are **Pre-market Gainers** and **After-hours Movers** (thresholds in `EXTENDED` in `presets.ts`). `MOCK_SESSION=pre|regular|post` picks the session the simulator runs.
+
+- **Charts**: `panels/ChartPanel.tsx` (lightweight-charts 5.2) with calculations in `lib/chartData.ts`.
+  - `SymbolStore` builds 1-minute bars from every trade, tagged with `session` (`DEFAULT_MAX_BARS` 2,400, about 2½ days).
+  - History is served at `GET /api/bars?symbol=` (proxied by Vite). Live bars go only to clients that sent `{ type: 'chart', symbols }`.
+  - The mock emits a `history` event: the previous day's session plus today so far. Its paths pass exactly through the seeded open, high, low and last, but timestamps end at the real "now", so on mock the axis shows wall-clock times.
+  - Line series join across empty points and a segment takes its *starting* point's color, so VWAP breaks are drawn with hidden points (see `vwapPoint`).
+  - Not built yet: drawing tools, a daily timeframe (needs the REST bootstrap, ARCHITECTURE step 2), multi-pane indicators (RSI/MACD) and saved chart templates.
+
 ### Still to do (in order)
 1. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev`, then merge into `main`.
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.

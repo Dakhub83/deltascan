@@ -17,6 +17,8 @@ export type ProviderEvents = {
   /** Today's session-to-date state, emitted before streaming (snapshot bootstrap). */
   seed: [seed: SessionSeed];
   reference: [ref: ReferenceData];
+  /** One symbol's recent 1-minute bars, oldest first (startup backfill). */
+  history: [symbol: string, bars: Bar[]];
   /** Exchange trading status: halts, quotation-only, resumptions. */
   tradingStatus: [status: TradingStatus];
   status: [status: ProviderStatus];

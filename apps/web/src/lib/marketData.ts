@@ -1,9 +1,10 @@
-import type { Alert, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
 
 export type RowsListener = (changed: SymbolSnapshot[], reset: boolean) => void;
 export type AlertsListener = (added: Alert[], reset: boolean) => void;
 export type HaltsListener = (changed: HaltEvent[], reset: boolean) => void;
+export type BarListener = (bar: Bar) => void;
 
 const MAX_ALERTS = 1_000;
 const HISTORY_POINTS = 600; // 10 minutes at 1 sample/sec
@@ -28,6 +29,8 @@ class MarketDataClient {
   private readonly rowListeners = new Set<RowsListener>();
   private readonly alertListeners = new Set<AlertsListener>();
   private readonly haltListeners = new Set<HaltsListener>();
+  /** Chart windows by symbol; the server streams live bars for exactly these symbols. */
+  private readonly barListeners = new Map<string, Set<BarListener>>();
   private pendingRows = new Map<string, SymbolSnapshot>();
   private pendingAlerts: Alert[] = [];
   private pendingHalts = new Map<string, HaltEvent>();
@@ -58,6 +61,32 @@ class MarketDataClient {
     return () => this.haltListeners.delete(fn);
   }
 
+  /** 1-minute bar history for a symbol, oldest first. */
+  async fetchBars(symbol: string): Promise<Bar[]> {
+    const res = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) throw new Error(`bars request failed: ${res.status}`);
+    return (await res.json()) as Bar[];
+  }
+
+  /** Live updates of a symbol's current 1-minute bar. */
+  onBars(symbol: string, fn: BarListener): () => void {
+    let set = this.barListeners.get(symbol);
+    if (!set) this.barListeners.set(symbol, (set = new Set()));
+    set.add(fn);
+    this.sendChartSymbols();
+    return () => {
+      set.delete(fn);
+      if (!set.size) this.barListeners.delete(symbol);
+      this.sendChartSymbols();
+    };
+  }
+
+  private sendChartSymbols(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const msg: ClientMessage = { type: 'chart', symbols: [...this.barListeners.keys()] };
+    this.ws.send(JSON.stringify(msg));
+  }
+
   private connect(): void {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -67,6 +96,7 @@ class MarketDataClient {
     ws.onopen = () => {
       this.attempt = 0;
       useUiStore.setState({ socket: 'open' });
+      this.sendChartSymbols();
     };
     ws.onmessage = (ev) => this.handle(JSON.parse(ev.data as string) as ServerMessage);
     ws.onclose = () => {
@@ -89,7 +119,7 @@ class MarketDataClient {
         this.pendingRows.clear();
         this.pendingAlerts = [];
         this.pendingHalts.clear();
-        useUiStore.setState({ provider: msg.data.status });
+        useUiStore.setState({ provider: msg.data.status, session: msg.data.session });
         const all = [...this.rows.values()];
         this.rowListeners.forEach((fn) => fn(all, true));
         this.alertListeners.forEach((fn) => fn(this.alerts, true));
@@ -97,6 +127,9 @@ class MarketDataClient {
         this.haltListeners.forEach((fn) => fn(halts, true));
         break;
       }
+      case 'bars':
+        for (const bar of msg.data) this.barListeners.get(bar.symbol)?.forEach((fn) => fn(bar));
+        break;
       case 'snapshots':
         for (const s of msg.data) {
           this.rows.set(s.symbol, s);
@@ -120,7 +153,7 @@ class MarketDataClient {
         useUiStore.setState({ provider: msg.data });
         break;
       case 'stats':
-        useUiStore.setState({ stats: msg.data });
+        useUiStore.setState({ stats: msg.data, session: msg.data.session });
         break;
     }
   }

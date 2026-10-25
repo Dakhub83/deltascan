@@ -236,7 +236,9 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           suppressCellFocus={false}
           animateRows
           suppressDragLeaveHidesColumns
-          overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">No symbols match this scan right now</span>'
+          overlayNoRowsTemplate={`<span style="color:#6b7587;font-size:12px;padding:0 16px;text-align:center">${
+            preset.emptyText ?? 'No symbols match this scan right now'
+          }</span>`}
         />
       </div>
     </div>

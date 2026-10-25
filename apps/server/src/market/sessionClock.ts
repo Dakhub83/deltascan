@@ -1,11 +1,16 @@
+import type { MarketSession, TradeSession } from '@deltascan/shared';
+
+const PRE_OPEN_MIN = 4 * 60; // 04:00 ET
 const REGULAR_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
 const REGULAR_CLOSE_MIN = 16 * 60; // 16:00 ET
+const POST_CLOSE_MIN = 20 * 60; // 20:00 ET
 const REGULAR_SESSION_MIN = REGULAR_CLOSE_MIN - REGULAR_OPEN_MIN;
 
 const etFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
   minute: 'numeric',
+  weekday: 'short',
   hourCycle: 'h23',
 });
 
@@ -18,6 +23,23 @@ export function etMinutesOfDay(now: number): number {
     if (part.type === 'minute') minute = Number(part.value);
   }
   return hour * 60 + minute;
+}
+
+/** Which session a trade at `ts` belongs to. Exchange holidays are not modelled yet. */
+export function tradeSessionAt(ts: number): TradeSession {
+  const mins = etMinutesOfDay(ts);
+  if (mins < REGULAR_OPEN_MIN) return 'pre';
+  if (mins < REGULAR_CLOSE_MIN) return 'regular';
+  return 'post';
+}
+
+/** The session running at `now`, for display ("Pre-market", "After hours", …). */
+export function marketSessionAt(now: number): MarketSession {
+  const weekday = etFormatter.formatToParts(now).find((p) => p.type === 'weekday')?.value;
+  if (weekday === 'Sat' || weekday === 'Sun') return 'closed';
+  const mins = etMinutesOfDay(now);
+  if (mins < PRE_OPEN_MIN || mins >= POST_CLOSE_MIN) return 'closed';
+  return tradeSessionAt(now);
 }
 
 /**
