@@ -424,6 +424,7 @@ function SettingsMenu() {
           <Toggle label="Desktop notifications" on={settings.notifications} onChange={(v) => void setNotifications(v)} />
           <MenuLabel>Display</MenuLabel>
           <Toggle label="Flash price changes" on={settings.flashCells} onChange={(v) => update({ flashCells: v })} />
+          <Toggle label="Scrolling ticker" on={settings.tickerTape} onChange={(v) => update({ tickerTape: v })} />
           <div className="my-1 h-px bg-line" />
           <MenuItem onClick={resetLayout}>
             <RotateCcw className="size-3.5" />

@@ -15,7 +15,7 @@ const TIPS: Record<string, string> = {
 };
 
 /** "● Offering Ability: Medium" rows, in two columns when there's room. */
-export function RiskRatings({ report, price, className }: { report: DilutionReport; price: number | null; className?: string }) {
+export function RiskRatings({ report, price, single, className }: { report: DilutionReport; price: number | null; single?: boolean; className?: string }) {
   const rows: { key: string; label: string; value: RiskLevel | null }[] = [
     { key: 'offering', label: 'Offering Ability', value: report.ratings.offering },
     { key: 'frequency', label: 'Offering Frequency', value: report.ratings.frequency },
@@ -25,7 +25,7 @@ export function RiskRatings({ report, price, className }: { report: DilutionRepo
     { key: 'compliance', label: `${report.exchange ?? 'Exchange'} Compliance`, value: complianceLevel(report, price) },
   ];
   return (
-    <ul className={clsx('grid grid-cols-1 gap-x-6 gap-y-1 @[380px]:grid-cols-2', className)}>
+    <ul className={clsx('grid grid-cols-1 gap-x-6 gap-y-1', !single && '@[380px]:grid-cols-2', className)}>
       {rows.map((r) => (
         <li key={r.key} title={TIPS[r.key]} className="flex items-center gap-2 text-[12px]">
           <span className={clsx('size-2.5 shrink-0 rounded-full', r.value ? DOT[r.value] : 'bg-line-strong')} />

@@ -1,5 +1,6 @@
 import { TopBar } from './components/TopBar';
 import { StatusBar } from './components/StatusBar';
+import { TickerTape } from './components/TickerTape';
 import { Workspace } from './components/Workspace';
 import clsx from 'clsx';
 import { useUiStore } from './store/uiStore';
@@ -25,9 +26,11 @@ function Notice() {
 }
 
 export function App() {
+  const tickerTape = useUiStore((s) => s.settings.tickerTape);
   return (
     <div className="flex h-full flex-col">
       <TopBar />
+      {tickerTape && <TickerTape />}
       <Notice />
       <main className="min-h-0 flex-1">
         <Workspace />

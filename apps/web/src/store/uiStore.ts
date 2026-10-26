@@ -12,6 +12,8 @@ export interface Settings {
   /** Alert types that play a sound / raise a desktop notification. */
   audibleTypes: AlertType[];
   flashCells: boolean;
+  /** Scrolling strip of indexes and top movers under the top bar. */
+  tickerTape: boolean;
   shortLimits: ShortLimits;
   /** False until the trader saves their own limits; the calculator nags until then. */
   shortLimitsSet: boolean;
@@ -48,6 +50,7 @@ export const useUiStore = create<UiState>()(
         notifications: false,
         audibleTypes: ['block_trade', 'volume_spike', 'new_high'],
         flashCells: true,
+        tickerTape: true,
         shortLimits: DEFAULT_SHORT_LIMITS,
         shortLimitsSet: false,
       },

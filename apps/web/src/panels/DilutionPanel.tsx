@@ -4,10 +4,10 @@ import type { DilutionFilingKind, DilutionReport, ReportedValue, ReverseSplit, S
 import { ExternalLink, Link2, Link2Off, ShieldAlert } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData, type DilutionResult, type ProfileResult } from '../lib/marketData';
-import { CompanyDescription, CompanyFacts, NewsList, useCompanyProfile } from '../components/CompanyInfo';
+import { CompanyDescription, NewsList, useCompanyProfile } from '../components/CompanyInfo';
 import { RiskRatings } from '../components/RiskRatings';
 import { TapeStrip } from '../components/TapeStrip';
-import { capLabel, cashPosition, floatLabel, fmtOffering, type Tone } from '../lib/dilutionView';
+import { capLabel, cashPosition, floatLabel, fmtOffering, isChinaBased, type Tone } from '../lib/dilutionView';
 import { fmtCompact, fmtPct, fmtPrice, signClass } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
@@ -55,6 +55,24 @@ function useLiveRow(symbol: string | null): SymbolSnapshot | null {
     });
   }, [symbol]);
   return row;
+}
+
+/** SEC stores many names in capitals ("HYDROFARM HOLDINGS GROUP, INC."). */
+function displayName(name: string): string {
+  if (name !== name.toUpperCase()) return name;
+  return name
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    .replace(/\b(Llc|Lp|Plc|Nv|Sa|Ag|Se|Usa|Ii|Iii)\b/g, (w) => w.toUpperCase());
+}
+
+function Fact({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-1.5" title={title}>
+      <dt className="shrink-0 font-semibold text-fg">{label}:</dt>
+      <dd className="min-w-0 text-dim">{children}</dd>
+    </div>
+  );
 }
 
 function Stat({ label, value, unit, note, tone }: { label: string; value: ReactNode; unit?: string; note?: ReactNode; tone?: string }) {
@@ -131,6 +149,7 @@ function Report({
   const cashPos = cashPosition(report);
   const floatTag = floatLabel(row?.floatShares);
   const timeline = shareTimeline(report);
+  const china = isChinaBased(companyProfile?.country);
 
   let runway: ReactNode = '—';
   let runwayNote: ReactNode = 'No recent cash-flow figures';
@@ -145,42 +164,109 @@ function Report({
 
   return (
     <div className="@container flex flex-col gap-3 p-3">
-      <section className="rounded-xl border border-line bg-raised/40 px-4 py-3">
-        <div className="text-[10px] font-semibold tracking-[0.14em] text-muted uppercase">
-          {[report.exchange, report.name].filter(Boolean).join(' · ')}
+      <section className={clsx('rounded-xl border px-4 py-3', level.card)}>
+        <h2 className="text-[16px] leading-snug font-bold">
+          <span className="text-accent">${report.symbol}</span> <span className="text-fg">— {displayName(report.name)}</span>
+        </h2>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[13px] font-semibold text-fg">
+          Overall Offering Risk:
+          <span className={clsx('flex items-center gap-1.5', level.text)}>
+            <span className={clsx('size-3 rounded-full', level.bar)} />
+            {level.label.charAt(0) + level.label.slice(1).toLowerCase()}
+          </span>
+          <span className="num text-[11px] font-medium text-muted">score {report.risk.score}/10</span>
         </div>
-        <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-[28px] leading-none font-bold tracking-tight text-fg">${report.symbol}</span>
-          {/* Price and change are in the tape strip above when the symbol is streaming. */}
-          {!row && price !== null && <span className="num text-[16px] font-semibold text-fg">{fmtPrice(price)}</span>}
+
+        <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-3 @[460px]:grid-cols-2">
+          <div>
+            <h3 className="mb-1 text-[13px] font-bold text-fg">Company</h3>
+            <dl className="flex flex-col gap-0.5 text-[12px]">
+              <Fact label="Price" title={!row ? 'Not in the live feed, so no price' : simulated ? 'Simulated price' : undefined}>
+                <span className="num">{price !== null ? `$${fmtPrice(price)}` : '—'}</span>
+              </Fact>
+              <Fact label="Mkt Cap" title={capLabel(marketCap) ?? undefined}>
+                <span className="num">{marketCap !== null ? usd(marketCap) : '—'}</span>
+                {marketCap !== null && <span className="ml-1 text-[10px] text-muted">{capLabel(marketCap)}</span>}
+              </Fact>
+              <Fact label="Float" title={!row ? 'Not in the live feed' : undefined}>
+                <span className="num">{row?.floatShares != null ? fmtCompact(row.floatShares) : '—'}</span>
+                {floatTag && <span className={clsx('ml-1 text-[10px] font-semibold', TONE[floatTag.tone])}>{floatTag.text}</span>}
+              </Fact>
+              <Fact label="Country">{companyProfile?.country ?? (profile === 'loading' ? '…' : '—')}</Fact>
+              <Fact label="China" title="China-based by business address (Hong Kong and Macau included)">
+                {china === null ? '—' : <span className={china ? 'text-warn' : 'text-up'}>{china ? 'Yes' : 'No'}</span>}
+              </Fact>
+              <Fact label="ADR" title="From the annual report cover: ADRs list American Depositary Shares">
+                {companyProfile?.adr == null ? '—' : <span className={companyProfile.adr ? 'text-warn' : 'text-up'}>{companyProfile.adr ? 'Yes' : 'No'}</span>}
+              </Fact>
+              <Fact label="Sector" title={report.industry ?? undefined}>
+                {report.sector ?? row?.sector ?? report.industry ?? '—'}
+              </Fact>
+              <Fact label="Exchange">{report.exchange?.toUpperCase() ?? '—'}</Fact>
+            </dl>
+          </div>
+          <div>
+            <h3 className="mb-1 text-[13px] font-bold text-fg">Dilution Risk</h3>
+            <RiskRatings report={report} price={price} single />
+          </div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
-          {[report.industry, report.location, `CIK ${Number(report.cik)}`].filter(Boolean).map((tag) => (
-            <span key={tag} className="rounded-md bg-line px-1.5 py-0.5 text-dim">{tag}</span>
-          ))}
-        </div>
-        <CompanyFacts profile={companyProfile} className="mt-2 text-[11px] text-dim" />
-        <div className="mt-2">
-          <CompanyDescription profile={companyProfile} loading={profile === 'loading'} />
-        </div>
+
+        {(cashPos || report.financial) && (
+          <div className="mt-3 border-t border-line/60 pt-2.5">
+            <h3 className="mb-0.5 text-[13px] font-bold text-fg">Cash Position</h3>
+            <p className="text-[12px] leading-relaxed text-dim">
+              {!cashPos ? (
+                'Not meaningful for banks and lenders: their operating cash flow includes loans made.'
+              ) : cashPos.positive ? (
+                <>
+                  Operating cash flow is <span className="font-semibold text-up">positive</span>, so the company isn't burning cash
+                  {cashPos.estCash !== null && <> (last reported cash {usd(cashPos.estCash)})</>}.
+                </>
+              ) : (
+                <>
+                  The company has{' '}
+                  <span className={clsx('num font-semibold', cashPos.monthsLeft < 6 ? 'text-down' : cashPos.monthsLeft < 12 ? 'text-warn' : 'text-up')}>
+                    {cashPos.monthsLeft.toFixed(1)} months
+                  </span>{' '}
+                  of cash left based on the quarterly cash burn of <span className="num font-semibold text-fg">{usd(cashPos.quarterlyBurn)}</span> and
+                  estimated current cash of <span className="num font-semibold text-fg">{usd(cashPos.estCash)}</span>.
+                  {report.equitySalesSinceBalanceSheet > 0 && (
+                    <>
+                      {' '}
+                      {report.equitySalesSinceBalanceSheet} equity sale{report.equitySalesSinceBalanceSheet > 1 ? 's' : ''} since the{' '}
+                      {shortDate(report.cash!.asOf)} balance sheet {report.equitySalesSinceBalanceSheet > 1 ? "aren't" : "isn't"} included.
+                    </>
+                  )}
+                </>
+              )}
+            </p>
+          </div>
+        )}
       </section>
 
-      <section className={clsx('rounded-xl border px-4 py-3', level.card)}>
+      <section className="rounded-xl border border-line bg-raised/40 px-4 py-3">
+        <div className="mb-1 flex flex-wrap gap-1.5 text-[10px]">
+          {[report.industry, companyProfile?.incorporatedIn && `Inc. ${companyProfile.incorporatedIn}`, `CIK ${Number(report.cik)}`]
+            .filter(Boolean)
+            .map((tag) => (
+              <span key={tag as string} className="rounded-md bg-line px-1.5 py-0.5 text-dim">{tag}</span>
+            ))}
+        </div>
+        <CompanyDescription profile={companyProfile} loading={profile === 'loading'} />
+      </section>
+
+      <section className="rounded-xl border border-line bg-raised/40 px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div>
-            <div className="text-[10px] font-semibold tracking-[0.14em] text-dim uppercase">Dilution risk</div>
-            <div className={clsx('text-[18px] font-bold', level.text)}>{level.label}</div>
-          </div>
-          <div className="flex min-w-40 flex-1 gap-1" aria-label={`Score ${report.risk.score} of 10`}>
+          <div className="text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Why the score</div>
+          <div className="flex min-w-32 flex-1 gap-1" aria-label={`Score ${report.risk.score} of 10`}>
             {Array.from({ length: 10 }, (_, i) => (
-              <span key={i} className={clsx('h-2 flex-1 rounded-full', i < report.risk.score ? level.bar : 'bg-line')} />
+              <span key={i} className={clsx('h-1.5 flex-1 rounded-full', i < report.risk.score ? level.bar : 'bg-line')} />
             ))}
           </div>
-          <div className={clsx('num text-[14px] font-semibold', level.text)}>{report.risk.score} / 10</div>
+          <div className={clsx('num text-[12px] font-semibold', level.text)}>{report.risk.score} / 10</div>
         </div>
-        <RiskRatings report={report} price={price} className="mt-3 border-t border-line/60 pt-2.5" />
         {report.risk.reasons.length > 0 ? (
-          <ul className="mt-2.5 flex flex-col gap-1">
+          <ul className="mt-2 flex flex-col gap-1">
             {report.risk.reasons.map((r) => (
               <li key={r.text} className="flex gap-2 text-[11px] leading-snug text-dim">
                 <span className={clsx('num w-5 shrink-0 text-right font-semibold', level.text)}>+{r.points}</span>
@@ -192,38 +278,6 @@ function Report({
           <p className="mt-2 text-[11px] text-dim">No dilution warning signs in the last year of SEC data.</p>
         )}
       </section>
-
-      {(cashPos || report.financial) && (
-        <section className="rounded-xl border border-line bg-raised/40 px-4 py-3">
-          <div className="mb-1 text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Cash position</div>
-          <p className="text-[12px] leading-relaxed text-dim">
-            {!cashPos ? (
-              'Not meaningful for banks and lenders: their operating cash flow includes loans made.'
-            ) : cashPos.positive ? (
-              <>
-                Operating cash flow is <span className="font-semibold text-up">positive</span>, so the company isn't burning cash
-                {cashPos.estCash !== null && <> (last reported cash {usd(cashPos.estCash)})</>}.
-              </>
-            ) : (
-              <>
-                The company has about{' '}
-                <span className={clsx('num font-semibold', cashPos.monthsLeft < 6 ? 'text-down' : cashPos.monthsLeft < 12 ? 'text-warn' : 'text-up')}>
-                  {cashPos.monthsLeft.toFixed(1)} months
-                </span>{' '}
-                of cash left, based on a quarterly cash burn of <span className="num font-semibold text-fg">{usd(cashPos.quarterlyBurn)}</span> and
-                estimated current cash of <span className="num font-semibold text-fg">{usd(cashPos.estCash)}</span>.
-                {report.equitySalesSinceBalanceSheet > 0 && (
-                  <>
-                    {' '}
-                    {report.equitySalesSinceBalanceSheet} equity sale{report.equitySalesSinceBalanceSheet > 1 ? 's' : ''} since the{' '}
-                    {shortDate(report.cash!.asOf)} balance sheet {report.equitySalesSinceBalanceSheet > 1 ? "aren't" : "isn't"} included.
-                  </>
-                )}
-              </>
-            )}
-          </p>
-        </section>
-      )}
 
       <section>
         <div className="mb-1.5 text-[10px] font-semibold tracking-[0.14em] text-accent uppercase">At a glance</div>

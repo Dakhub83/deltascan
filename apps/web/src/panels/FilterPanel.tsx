@@ -3,8 +3,9 @@ import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, ColumnState, GetRowIdParams, GridApi, GridReadyEvent, IRowNode } from 'ag-grid-community';
 import type { IDockviewPanelProps } from 'dockview';
 import type { SymbolSnapshot } from '@deltascan/shared';
-import { Check, ChevronDown, Columns3, Pause, Play } from 'lucide-react';
+import { Check, ChevronDown, Columns3, DollarSign, Pause, Play, X } from 'lucide-react';
 import clsx from 'clsx';
+import { inPriceRange, isActive, parseBound, PRICE_PRESETS, rangeLabel, type PriceRange } from '../scanners/priceRange';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
@@ -16,15 +17,80 @@ import { IconButton, MenuItem, MenuLabel, Popover } from '../components/Popover'
 export interface FilterPanelParams {
   presetId: string;
   columnState?: ColumnState[];
+  /** Applied on top of the scanner's own filter; per window. */
+  priceRange?: PriceRange;
 }
 
 const getRowId = (p: GetRowIdParams<SymbolSnapshot>) => p.data.symbol;
+
+function PriceFilter({ range, onChange, close }: { range: PriceRange | undefined; onChange: (r: PriceRange | undefined) => void; close: () => void }) {
+  const [min, setMin] = useState(range?.min?.toString() ?? '');
+  const [max, setMax] = useState(range?.max?.toString() ?? '');
+  const apply = (r: PriceRange | undefined) => {
+    onChange(isActive(r) ? r : undefined);
+    close();
+  };
+  const input = (value: string, set: (v: string) => void, label: string) => (
+    <label className="flex flex-1 items-center gap-1 rounded-md border border-line bg-bg px-2 focus-within:border-accent/60">
+      <span className="text-[11px] text-muted">$</span>
+      <input
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        inputMode="decimal"
+        placeholder={label}
+        aria-label={`${label} price`}
+        className="num h-6 w-full bg-transparent text-[12px] text-fg outline-none placeholder:text-muted"
+      />
+    </label>
+  );
+  return (
+    <form
+      className="w-60"
+      onSubmit={(e) => {
+        e.preventDefault();
+        apply({ min: parseBound(min), max: parseBound(max) });
+      }}
+    >
+      <MenuLabel>Price</MenuLabel>
+      <div className="flex items-center gap-1.5 px-2.5 pb-2">
+        {input(min, setMin, 'Min')}
+        <span className="text-[11px] text-muted">to</span>
+        {input(max, setMax, 'Max')}
+      </div>
+      <div className="flex flex-wrap gap-1 px-2.5 pb-2">
+        {PRICE_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => apply(p.range)}
+            className={clsx(
+              'rounded-md px-2 py-0.5 text-[11px] ring-1 ring-inset transition-colors',
+              range?.min === p.range.min && range?.max === p.range.max ? 'bg-accent/15 text-accent ring-accent/40' : 'text-dim ring-line hover:bg-hover hover:text-fg',
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1.5 border-t border-line px-2.5 pt-2 pb-1">
+        <button type="submit" className="flex-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white hover:bg-accent/90">
+          Apply
+        </button>
+        <button type="button" onClick={() => apply(undefined)} className="rounded-md px-2 py-1 text-[11px] text-dim hover:bg-hover hover:text-fg">
+          Any price
+        </button>
+      </div>
+    </form>
+  );
+}
 
 export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<FilterPanelParams>) {
   const preset = PRESETS_BY_ID.get(params.presetId) ?? PRESETS[0]!;
   const gridApi = useRef<GridApi<SymbolSnapshot> | null>(null);
   const presetRef = useRef(preset);
   presetRef.current = preset;
+  const priceRef = useRef(params.priceRange);
+  priceRef.current = params.priceRange;
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
   const [count, setCount] = useState(0);
@@ -69,6 +135,10 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
     setVisibleCols(new Set(preset.columns));
   }, [preset]);
 
+  useEffect(() => {
+    gridApi.current?.onFilterChanged();
+  }, [params.priceRange]);
+
   // Keep row selection linked to the global selected symbol.
   useEffect(() => {
     const api = gridApi.current;
@@ -109,6 +179,12 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
     panelApi.setTitle(next.title);
     requestLayoutSave();
   };
+
+  const setPriceRange = (priceRange: PriceRange | undefined) => {
+    panelApi.updateParameters({ priceRange });
+    requestLayoutSave();
+  };
+  const priceOn = isActive(params.priceRange);
 
   const toggleColumn = (id: ColumnId) => {
     const api = gridApi.current;
@@ -166,7 +242,30 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           )}
         </Popover>
 
-        <span className="hidden truncate text-[11px] text-muted @[520px]:inline">{preset.description}</span>
+        <Popover
+          trigger={(open) => (
+            <button
+              type="button"
+              title="Filter by price"
+              className={clsx(
+                'flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors',
+                priceOn ? 'bg-accent/15 text-accent hover:bg-accent/25' : clsx('text-muted hover:bg-hover hover:text-fg', open && 'bg-hover text-fg'),
+              )}
+            >
+              <DollarSign className="size-3" />
+              {priceOn ? rangeLabel(params.priceRange) : 'Price'}
+            </button>
+          )}
+        >
+          {(close) => <PriceFilter range={params.priceRange} onChange={setPriceRange} close={close} />}
+        </Popover>
+        {priceOn && (
+          <button type="button" title="Clear the price filter" aria-label="Clear the price filter" onClick={() => setPriceRange(undefined)} className="-ml-1.5 rounded p-0.5 text-muted hover:bg-hover hover:text-fg">
+            <X className="size-3" />
+          </button>
+        )}
+
+        <span className="hidden truncate text-[11px] text-muted @[620px]:inline">{preset.description}</span>
 
         <div className="ml-auto flex items-center gap-1">
           <span
@@ -220,7 +319,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           getRowId={getRowId}
           onGridReady={onGridReady}
           isExternalFilterPresent={() => true}
-          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && presetRef.current.filter(node.data)}
+          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && inPriceRange(node.data.last, priceRef.current) && presetRef.current.filter(node.data)}
           onModelUpdated={(e) => setCount(e.api.getDisplayedRowCount())}
           rowSelection={{ mode: 'singleRow', checkboxes: false, enableClickSelection: true }}
           onRowClicked={(e) => {

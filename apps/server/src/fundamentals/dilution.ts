@@ -166,13 +166,78 @@ function reverseSplits(subs: Submissions, cik: string, history: FactPoint[], det
   return [...fromFilings, ...fromCounts].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const yearEarlier = (date: string) => `${Number(date.slice(0, 4)) - 1}${date.slice(4)}`;
+const monthsIn = (p: FactPoint) => (time(p.end) - time(p.start!)) / DAY_MS / MONTH_DAYS;
+
+/**
+ * Monthly operating cash burn over the trailing twelve months: the last fiscal year, minus last
+ * year's year-to-date, plus this year's. A single quarter or half swings with working capital
+ * (a company selling down inventory can look cash-neutral while losing money), so the latest
+ * year-to-date figure is only the fallback.
+ */
 function burn(facts: CompanyFacts) {
-  const ocf = points(facts, 'us-gaap', 'NetCashProvidedByUsedInOperatingActivities', 'USD').filter((p) => p.start);
-  // Latest period end; for ties (e.g. a 10-K's year vs. quarter), the most recent filing.
-  const last = ocf.reduce<FactPoint | null>((best, p) => (!best || p.end > best.end || (p.end === best.end && p.filed > best.filed) ? p : best), null);
+  const ocf = byPeriod(points(facts, 'us-gaap', 'NetCashProvidedByUsedInOperatingActivities', 'USD').filter((p) => p.start));
+  // Latest period end; for ties (e.g. a 10-K's year vs. quarter), the longer period.
+  const last = ocf.reduce<FactPoint | null>((best, p) => (!best || p.end > best.end || (p.end === best.end && p.start! < best.start!) ? p : best), null);
   if (!last) return null;
-  const months = Math.max(1, (time(last.end) - time(last.start!)) / DAY_MS / MONTH_DAYS);
-  return { monthly: -last.val / months, start: last.start!, end: last.end };
+  const months = monthsIn(last);
+  if (months < 11) {
+    const fiscalYear = ocf.find((p) => p.end === isoDay(time(last.start!) - DAY_MS) && Math.abs(monthsIn(p) - 12) < 1);
+    const priorYtd = ocf.find((p) => p.start === yearEarlier(last.start!) && p.end === yearEarlier(last.end));
+    if (fiscalYear && priorYtd) {
+      const ttm = fiscalYear.val - priorYtd.val + last.val;
+      return { monthly: -ttm / 12, start: isoDay(time(priorYtd.end) + DAY_MS), end: last.end };
+    }
+  }
+  return { monthly: -last.val / Math.max(1, months), start: last.start!, end: last.end };
+}
+
+/** Later filings restate earlier periods; keep the most recently filed value for each start–end pair. */
+function byPeriod(pts: FactPoint[]): FactPoint[] {
+  const latest = new Map<string, FactPoint>();
+  for (const p of pts) {
+    const key = `${p.start}|${p.end}`;
+    const cur = latest.get(key);
+    if (!cur || p.filed > cur.filed) latest.set(key, p);
+  }
+  return [...latest.values()];
+}
+
+/** SEC industry code → broad sector, roughly as GICS groups them. */
+export function sectorFromSic(sic: string | undefined): string | null {
+  const c = Number(sic);
+  if (!sic || !Number.isFinite(c) || c === 0) return null;
+  const within = (lo: number, hi: number) => c >= lo && c <= hi;
+  if (c === 6770) return 'Blank check (SPAC)';
+  if (within(100, 999)) return 'Consumer Staples';
+  if (within(1300, 1399) || within(2900, 2999)) return 'Energy';
+  if (within(1000, 1499)) return 'Materials';
+  if (within(1500, 1799)) return 'Industrials';
+  if (within(2000, 2199)) return 'Consumer Staples';
+  if (within(2200, 2399) || within(2500, 2599)) return 'Consumer Discretionary';
+  if (within(2700, 2799)) return 'Communication Services';
+  if (within(2830, 2836)) return 'Health Care';
+  if (within(2840, 2844)) return 'Consumer Staples';
+  if (within(2400, 3399)) return 'Materials';
+  if (within(3570, 3579) || within(3600, 3629) || within(3640, 3699) || within(3800, 3839)) return 'Information Technology';
+  if (within(3630, 3639) || within(3711, 3716) || within(3750, 3751) || within(3860, 3999)) return 'Consumer Discretionary';
+  if (within(3840, 3851)) return 'Health Care';
+  if (within(3400, 3999) || within(4000, 4799)) return 'Industrials';
+  if (within(4800, 4899)) return 'Communication Services';
+  if (within(4900, 4999)) return 'Utilities';
+  if (within(5120, 5122)) return 'Health Care';
+  if (within(5000, 5199)) return 'Industrials';
+  if (within(5400, 5499) || c === 5912) return 'Consumer Staples';
+  if (within(5200, 5999)) return 'Consumer Discretionary';
+  if (within(6500, 6553) || c === 6798) return 'Real Estate';
+  if (within(6000, 6799)) return 'Financials';
+  if (within(7370, 7379)) return 'Information Technology';
+  if (within(7800, 7999) || within(7810, 7819)) return 'Communication Services';
+  if (within(8000, 8099) || within(8730, 8731)) return 'Health Care';
+  if (within(7000, 7299) || within(8200, 8299)) return 'Consumer Discretionary';
+  if (within(7300, 8999)) return 'Industrials';
+  return null;
 }
 
 /** Convertible debt: a total tag if reported, otherwise current + noncurrent, all at the latest period end. */
@@ -396,6 +461,7 @@ export function buildDilutionReport(
     name: subs.name,
     exchange: subs.exchanges?.[0] ?? null,
     industry: subs.sicDescription || null,
+    sector: sectorFromSic(subs.sic),
     location: subs.addresses?.business?.stateOrCountryDescription ?? null,
     sharesOutstanding,
     shareHistory: history.map((p, i) => ({ asOf: p.end, value: p.val, adjusted: adjusted[i]!.val })).slice(-12),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDilutionReport, type CompanyFacts, type FactPoint, type Submissions } from '../src/fundamentals/dilution';
+import { buildDilutionReport, sectorFromSic, type CompanyFacts, type FactPoint, type Submissions } from '../src/fundamentals/dilution';
 
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 
@@ -54,6 +54,32 @@ describe('buildDilutionReport', () => {
     expect(r.runwayMonths).toBeCloseTo(5.9, 1);
     // ~4 months have passed since Jun 30, so under 6 months remain.
     expect(r.risk.reasons[0]).toMatchObject({ points: 3 });
+  });
+
+  it('uses trailing-twelve-month burn when the year-to-date figure is short', () => {
+    // FY2025 burned $14.06M, H1 2025 $10.05M, H1 2026 only $0.71M: TTM is $4.72M.
+    const ocf = [
+      pt('2025-06-30', -10_047_000, { start: '2025-01-01', filed: '2025-08-12' }),
+      pt('2025-12-31', -14_059_000, { start: '2025-01-01', filed: '2026-03-27' }),
+      pt('2026-03-31', -759_000, { start: '2026-01-01', filed: '2026-05-15' }),
+      pt('2026-06-30', -707_000, { start: '2026-01-01', filed: '2026-08-14' }),
+    ];
+    const r = buildDilutionReport('TST', '0000000001', facts({ ocf }), subs(), undefined, NOW);
+    expect(r.monthlyBurn).toBeCloseTo(4_719_000 / 12, -2);
+    expect(r.burnPeriod).toEqual({ start: '2025-07-01', end: '2026-06-30' });
+  });
+
+  it('maps SIC codes to broad sectors', () => {
+    expect(['5190', '2834', '7372', '6022', '6798', '1311', '6770', undefined].map(sectorFromSic)).toEqual([
+      'Industrials',
+      'Health Care',
+      'Information Technology',
+      'Financials',
+      'Real Estate',
+      'Energy',
+      'Blank check (SPAC)',
+      null,
+    ]);
   });
 
   it('measures share growth from the last reverse split, not across it', () => {

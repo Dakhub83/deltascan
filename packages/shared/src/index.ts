@@ -319,6 +319,8 @@ export interface DilutionReport {
   name: string;
   exchange: string | null;
   industry: string | null;
+  /** Broad sector derived from the SIC code ("Industrials", "Health Care"). */
+  sector: string | null;
   location: string | null;
   sharesOutstanding: ReportedValue | null;
   /** Cover-page share counts, oldest first. `adjusted` restates earlier counts for later reverse splits with a known ratio. */
