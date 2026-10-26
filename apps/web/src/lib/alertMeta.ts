@@ -8,6 +8,8 @@ import {
   Flame,
   Pause,
   Play,
+  TrendingDown,
+  Undo2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -79,6 +81,22 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     text: 'text-warn',
     badge: 'bg-warn/12 text-warn ring-warn/25',
     tone: [392, 392, 392],
+  },
+  rejection_confirmed: {
+    label: 'Rejection Confirmed',
+    short: 'REJECT ✓',
+    icon: TrendingDown,
+    text: 'text-down',
+    badge: 'bg-down/12 text-down ring-down/25',
+    tone: [988, 740, 523],
+  },
+  vwap_bounce: {
+    label: 'Backside VWAP Bounce',
+    short: 'VWAP BNC',
+    icon: Undo2,
+    text: 'text-violet',
+    badge: 'bg-violet/12 text-violet ring-violet/25',
+    tone: [587, 784, 587],
   },
   resume: {
     label: 'Halt Resumed',

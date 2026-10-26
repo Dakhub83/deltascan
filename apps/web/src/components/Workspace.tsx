@@ -7,14 +7,17 @@ import {
   type IDockviewPanelHeaderProps,
 } from 'dockview';
 import {
+  Calculator,
   ChartCandlestick,
   Crosshair,
+  IdCard,
   ExternalLink,
   Maximize2,
   Minimize2,
   OctagonPause,
   PictureInPicture2,
   Siren,
+  ShieldAlert,
   SquareSplitHorizontal,
   X,
 } from 'lucide-react';
@@ -23,6 +26,9 @@ import { FilterPanel } from '../panels/FilterPanel';
 import { AlertPanel } from '../panels/AlertPanel';
 import { HaltPanel } from '../panels/HaltPanel';
 import { ChartPanel } from '../panels/ChartPanel';
+import { DilutionPanel } from '../panels/DilutionPanel';
+import { ShortCalcPanel } from '../panels/ShortCalcPanel';
+import { QuotePanel } from '../panels/QuotePanel';
 import { SymbolPanel } from '../panels/SymbolPanel';
 import { PRESETS_BY_ID } from '../scanners/presets';
 import { buildDefaultLayout, requestLayoutSave, restoreLayout, setDockApi } from '../lib/layout';
@@ -36,6 +42,9 @@ const components = {
   symbol: () => <SymbolPanel />,
   halts: () => <HaltPanel />,
   chart: ChartPanel,
+  dilution: DilutionPanel,
+  shortcalc: ShortCalcPanel,
+  quote: QuotePanel,
 };
 
 function iconFor(id: string, params: Record<string, unknown> | undefined) {
@@ -43,6 +52,9 @@ function iconFor(id: string, params: Record<string, unknown> | undefined) {
   if (id.startsWith('symbol')) return Crosshair;
   if (id.startsWith('halts')) return OctagonPause;
   if (id.startsWith('chart')) return ChartCandlestick;
+  if (id.startsWith('dilution')) return ShieldAlert;
+  if (id.startsWith('shortcalc')) return Calculator;
+  if (id.startsWith('quote')) return IdCard;
   return PRESETS_BY_ID.get(String(params?.presetId))?.icon;
 }
 

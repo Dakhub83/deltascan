@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AlertType, MarketSession, ProviderStatus, ServerStats } from '@deltascan/shared';
+import { DEFAULT_SHORT_LIMITS, type ShortLimits } from '../lib/shortPlan';
 
 export type SocketState = 'connecting' | 'open' | 'closed';
 
@@ -11,6 +12,9 @@ export interface Settings {
   /** Alert types that play a sound / raise a desktop notification. */
   audibleTypes: AlertType[];
   flashCells: boolean;
+  shortLimits: ShortLimits;
+  /** False until the trader saves their own limits; the calculator nags until then. */
+  shortLimitsSet: boolean;
 }
 
 interface UiState {
@@ -41,6 +45,8 @@ export const useUiStore = create<UiState>()(
         notifications: false,
         audibleTypes: ['block_trade', 'volume_spike', 'new_high'],
         flashCells: true,
+        shortLimits: DEFAULT_SHORT_LIMITS,
+        shortLimitsSet: false,
       },
       setSelectedSymbol: (selectedSymbol) => set({ selectedSymbol }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -48,6 +54,19 @@ export const useUiStore = create<UiState>()(
     {
       name: 'deltascan.ui.v1',
       partialize: (s) => ({ settings: s.settings, selectedSymbol: s.selectedSymbol }),
+      // Saved settings from older versions lack newer keys; layer them over the defaults.
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<UiState>;
+        return {
+          ...current,
+          ...saved,
+          settings: {
+            ...current.settings,
+            ...saved.settings,
+            shortLimits: { ...current.settings.shortLimits, ...saved.settings?.shortLimits },
+          },
+        };
+      },
     },
   ),
 );

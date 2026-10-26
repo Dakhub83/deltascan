@@ -38,6 +38,8 @@ const schema = z
 
     POLYGON_API_KEY: z.string().optional(),
     FINNHUB_API_KEY: z.string().optional(),
+    // SEC asks every client to identify itself with a contact email; requests without one get 403.
+    SEC_USER_AGENT: z.string().optional(),
 
     WATCHLIST: symbolList,
 

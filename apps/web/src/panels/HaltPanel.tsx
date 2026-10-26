@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
+import { openQuoteFor } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 
 const NEW_ROW_MS = 2_500;
@@ -140,6 +141,7 @@ export function HaltPanel() {
           getRowClass={getRowClass}
           onGridReady={onGridReady}
           onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
+          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
           overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">No halts today</span>'
         />
       </div>

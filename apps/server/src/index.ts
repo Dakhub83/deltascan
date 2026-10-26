@@ -4,6 +4,8 @@ import { SymbolStore } from './cache/SymbolStore';
 import { IngestionService } from './ingestion/IngestionService';
 import { AlertEngine } from './scanner/AlertEngine';
 import { HaltTracker } from './scanner/HaltTracker';
+import { FadeDetector } from './scanner/FadeDetector';
+import { SecClient } from './fundamentals/SecClient';
 import { ClientGateway } from './gateway/ClientGateway';
 import { marketSessionAt, mockSessionFraction, regularSessionFraction, tradeSessionAt } from './market/sessionClock';
 
@@ -37,6 +39,9 @@ const halts = new HaltTracker({
     ),
 });
 
+const sec = env.SEC_USER_AGENT ? new SecClient(env.SEC_USER_AGENT, logger) : null;
+if (!sec) logger.warn('SEC_USER_AGENT not set: the Dilution window is disabled');
+
 let gateway: ClientGateway | null = null;
 const ingestion = new IngestionService(env, store, alerts, halts, logger, (status) =>
   gateway?.publishStatus(status),
@@ -45,6 +50,13 @@ const ingestion = new IngestionService(env, store, alerts, halts, logger, (statu
 let lastStats = { tradesPerSec: 0, quotesPerSec: 0, symbols: 0 };
 const statsSampler = setInterval(() => (lastStats = ingestion.takeStats()), 1_000);
 const momentumSampler = setInterval(() => store.sampleMomentum(), 1_000);
+const fades = new FadeDetector((type, symbol, price, detail) =>
+  alerts.raise(type, { symbol, price, timestamp: Date.now() }, store.get(symbol)?.changePct ?? null, detail),
+);
+// Only newly completed 1-minute bars are processed, so this stays cheap.
+const fadeSampler = setInterval(() => {
+  for (const s of store.all()) store.setFade(s.symbol, fades.evaluate(s, store.getBars(s.symbol)));
+}, 1_000);
 
 gateway = new ClientGateway({
   port: env.SERVER_PORT,
@@ -55,6 +67,7 @@ gateway = new ClientGateway({
   getStatus: () => ingestion.status,
   getStats: () => ({ ...lastStats, session: currentSession() }),
   getSession: currentSession,
+  dilution: sec ? (symbol) => sec.dilution(symbol) : undefined,
   logger,
 });
 
@@ -70,6 +83,7 @@ function shutdown(signal: string): void {
   logger.info({ signal }, 'shutting down');
   clearInterval(statsSampler);
   clearInterval(momentumSampler);
+  clearInterval(fadeSampler);
   clearInterval(statsLogger);
   gateway?.stop();
   ingestion.stop();

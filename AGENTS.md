@@ -8,7 +8,7 @@ A real-time scanner for day and swing trading, modelled on Trade Ideas, Scanz an
 
 ```bash
 npm run dev          # server (ws://localhost:4000/ws) + web (http://localhost:5173), mock data, no keys
-npm test             # vitest, server only (apps/server/test)
+npm test             # vitest: apps/server/test and apps/web/src/**/*.test.ts
 npm run typecheck    # all workspaces
 ```
 
@@ -59,6 +59,20 @@ npm run typecheck    # all workspaces
   - The mock emits a `history` event: the previous day's session plus today so far. Its paths pass exactly through the seeded open, high, low and last, but timestamps end at the real "now", so on mock the axis shows wall-clock times.
   - Line series join across empty points and a segment takes its *starting* point's color, so VWAP breaks are drawn with hidden points (see `vwapPoint`).
   - Not built yet: drawing tools, a daily timeframe (needs the REST bootstrap, ARCHITECTURE step 2), multi-pane indicators (RSI/MACD) and saved chart templates.
+
+- **Dilution window**: `panels/DilutionPanel.tsx`.
+  - Server: `fundamentals/SecClient.ts` fetches SEC EDGAR (rate-limited, 6 h cache, needs `SEC_USER_AGENT`). `fundamentals/dilution.ts` is a pure builder (tests in `test/dilution.test.ts`). The endpoint is `GET /api/dilution?symbol=`; it returns 503 when not configured and 404 for unknown tickers, including the mock's made-up ones.
+  - Score heuristics: runway is skipped for SIC 6000–6799 (financials). Prospectus and shelf filings don't count for issuers with an S-3ASR (well-known seasoned issuers, usually debt deals). Share growth is measured from the last >40 % drop, because XBRL isn't split-adjusted.
+  - **+ Window → Dilution** opens it as a dockview pop-out (a separate browser window).
+
+- **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
+  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `rejection_confirmed` and `vwap_bounce` alerts, and replays backfill silently.
+  - Detector floors (price, float) duplicate `FADE` in `apps/web/src/scanners/fade.ts`; keep them in sync.
+  - Scanners are `fade-setups` and `backside-vwap`; columns are `fadeStage`, `offHighPct` and `sinceHighMin`.
+  - `panels/ShortCalcPanel.tsx` + `lib/shortPlan.ts` (tests in `shortPlan.test.ts`; the web workspace now runs vitest too). Limits live in `settings.shortLimits`; the persist `merge` layers saved settings over the defaults.
+  - Not built yet: an overhang badge and warrant/conversion price lines on the chart, a 9:30–10:30 focus highlight, UI editing of detector thresholds, and DAS position sync.
+
+- **Quote card**: `panels/QuotePanel.tsx`. Row double-click (Filter, Alert and Halt panels) calls `openQuoteFor` in `lib/layout.ts`, which pops out one window per symbol and focuses it if it already exists. The card uses the live snapshot plus `DilutionReport.ratings` / `foreignFiler` from `dilution.ts`. SSR is computed client-side (low ≤ 90 % of prevClose; carry-over from the prior day isn't tracked). Gap analysis and news aren't built yet: they need daily bars and a news feed (Alpaca has both).
 
 ### Still to do (in order)
 1. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev`, then merge into `main`.

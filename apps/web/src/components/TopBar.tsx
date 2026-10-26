@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   Bell,
   BellOff,
+  Calculator,
   ChartCandlestick,
   Check,
   Crosshair,
@@ -10,6 +11,7 @@ import {
   Plus,
   Radar,
   RotateCcw,
+  ShieldAlert,
   Save,
   Search,
   Settings2,
@@ -26,6 +28,8 @@ import {
   activeLayoutName,
   addAlertWindow,
   addChartWindow,
+  addDilutionWindow,
+  addShortCalcWindow,
   addFilterWindow,
   addHaltWindow,
   addSymbolWindow,
@@ -185,6 +189,14 @@ function NewWindowMenu() {
           <MenuItem onClick={() => (addChartWindow(), close())}>
             <ChartCandlestick className="size-3.5 text-up" />
             Chart
+          </MenuItem>
+          <MenuItem onClick={() => (addDilutionWindow(), close())}>
+            <ShieldAlert className="size-3.5 text-down" />
+            Dilution <span className="ml-auto text-[10px] text-muted">new window</span>
+          </MenuItem>
+          <MenuItem onClick={() => (addShortCalcWindow(), close())}>
+            <Calculator className="size-3.5 text-warn" />
+            Short calc
           </MenuItem>
           <MenuItem onClick={() => (addAlertWindow(), close())}>
             <Siren className="size-3.5 text-warn" />

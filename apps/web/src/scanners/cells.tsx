@@ -4,6 +4,7 @@ import type { SymbolSnapshot } from '@deltascan/shared';
 import clsx from 'clsx';
 import { fmtCompact, fmtMultiple, fmtPct, fmtPrice } from '../lib/format';
 import { useUiStore } from '../store/uiStore';
+import { STAGE_META, isLate } from './fade';
 
 type Props<V> = CustomCellRendererProps<SymbolSnapshot, V>;
 
@@ -83,6 +84,22 @@ export function FloatCell({ value }: Props<number | null>) {
   const low = value != null && value < 10e6;
   return (
     <span className={clsx('num w-full text-right', low ? 'font-semibold text-warn' : 'text-dim')}>{fmtCompact(value)}</span>
+  );
+}
+
+/** Setup stage badge, plus LATE when the move is old (see FADE). */
+export function StageCell({ data }: Props<number | null>) {
+  if (!data?.fade) return null;
+  const meta = STAGE_META[data.fade.stage];
+  return (
+    <span className="flex items-center gap-1">
+      <span className={clsx('rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1 ring-inset', meta.badge)}>{meta.label}</span>
+      {isLate(data) && (
+        <span className="rounded bg-muted/15 px-1 text-[9px] font-bold tracking-wider text-muted" title="Far off the high or long since it: likely the back side of the move">
+          LATE
+        </span>
+      )}
+    </span>
   );
 }
 

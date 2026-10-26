@@ -132,6 +132,40 @@ export function addSymbolWindow(): void {
   api?.addPanel({ id: `symbol-${uid()}`, component: 'symbol', title: 'Symbol', params: {}, floating: { ...floating(), width: 380, height: 520 } });
 }
 
+/**
+ * Opens the Dilution window in its own browser window, so it can sit on another monitor and
+ * follow whatever you click. Stays floating if the browser blocks the pop-up.
+ */
+export function addDilutionWindow(params: { symbol?: string; linked?: boolean } = {}): void {
+  popOut('dilution', 'Dilution', params, 560, 760);
+}
+
+/** Opens `component` in its own browser window, cascaded so repeat windows don't stack exactly. */
+function popOut(component: string, title: string, params: object, width: number, height: number): void {
+  if (!api) return;
+  const offset = (api.panels.filter((p) => p.api.component === component).length % 6) * 28;
+  const panel = api.addPanel({ id: `${component}-${uid()}`, component, title, params, floating: { ...floating(), width, height } });
+  const left = window.screenX + Math.max(0, window.outerWidth - width - 40) - offset;
+  void api.addPopoutGroup(panel, { position: { left, top: window.screenY + 80 + offset, width, height } });
+}
+
+/**
+ * Double-click on a symbol: a quote card pinned to it, in its own browser window. If that
+ * symbol already has one, bring it to the front instead of opening a duplicate.
+ */
+export function openQuoteFor(symbol: string): void {
+  if (!api) return;
+  const existing = api.panels.find((p) => p.api.component === 'quote' && (p.params as { symbol?: string } | undefined)?.symbol === symbol);
+  if (!existing) return popOut('quote', `${symbol} · Quote`, { symbol }, 440, 820);
+  existing.api.setActive();
+  const location = existing.group.api.location;
+  if (location.type === 'popout') location.getWindow().focus();
+}
+
+export function addShortCalcWindow(): void {
+  api?.addPanel({ id: `shortcalc-${uid()}`, component: 'shortcalc', title: 'Short calc', params: {}, floating: { ...floating(), width: 480, height: 620 } });
+}
+
 export function addChartWindow(): void {
   api?.addPanel({ id: `chart-${uid()}`, component: 'chart', title: 'Chart', params: {}, floating: { ...floating(), width: 820, height: 480 } });
 }
@@ -189,6 +223,14 @@ export function buildDefaultLayout(): void {
     id: 'chart',
     component: 'chart',
     title: 'Chart',
+    params: {},
+    position: { referencePanel: 'symbol', direction: 'within' },
+  });
+
+  api.addPanel({
+    id: 'dilution',
+    component: 'dilution',
+    title: 'Dilution',
     params: {},
     position: { referencePanel: 'symbol', direction: 'within' },
   });

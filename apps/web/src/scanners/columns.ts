@@ -1,7 +1,8 @@
 import type { ColDef, ValueGetterParams } from 'ag-grid-community';
 import type { SymbolSnapshot } from '@deltascan/shared';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
-import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, SymbolCell, TierCell, type Tier } from './cells';
+import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, StageCell, SymbolCell, TierCell, type Tier } from './cells';
+import { STAGE_META, minutesSinceHigh, offHighPct } from './fade';
 
 type Col = ColDef<SymbolSnapshot>;
 type Getter = (s: SymbolSnapshot) => number | null;
@@ -43,6 +44,21 @@ export const COLUMNS = {
   changePct: { ...num, colId: 'changePct', field: 'changePct', headerName: 'Chg %', width: 86, cellRenderer: ChangeCell },
   chg1mPct: { ...num, ...pctFmt, colId: 'chg1mPct', field: 'chg1mPct', headerName: '1m %', width: 72, cellClassRules: signRules() },
   chg5mPct: { ...num, ...pctFmt, colId: 'chg5mPct', field: 'chg5mPct', headerName: '5m %', width: 72, cellClassRules: signRules() },
+  fadeStage: {
+    colId: 'fadeStage', headerName: 'Setup', width: 132, sortingOrder: ['asc', 'desc', null],
+    valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data?.fade ? STAGE_META[p.data.fade.stage].order : null),
+    cellRenderer: StageCell,
+  },
+  offHighPct: {
+    ...num, colId: 'offHighPct', headerName: 'Off High', width: 80, sortingOrder: ['asc', 'desc', null],
+    valueGetter: getter(offHighPct), valueFormatter: (p) => (p.value == null ? '—' : `-${p.value.toFixed(1)}%`),
+    cellClassRules: { 'text-down': (p) => (p.value ?? 0) >= 8 },
+  },
+  sinceHighMin: {
+    ...num, colId: 'sinceHighMin', headerName: 'Since High', width: 84, sortingOrder: ['asc', 'desc', null],
+    valueGetter: getter((s) => minutesSinceHigh(s)), valueFormatter: (p) => (p.value == null ? '—' : `${Math.floor(p.value)}m`),
+    cellClass: 'num text-dim',
+  },
   tier: {
     colId: 'tier', headerName: 'Type', width: 78, sortable: false,
     valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? tierOf(p.data) : null), cellRenderer: TierCell,

@@ -1,5 +1,6 @@
 import type { SymbolSnapshot } from '@deltascan/shared';
-import { Gauge, List, Moon, Rocket, Sun, Sunrise, Target, TrendingDown, TrendingUp, Waves, Zap, type LucideIcon } from 'lucide-react';
+import { ArrowDownRight, Gauge, List, Moon, Rocket, Sun, Sunrise, Target, TrendingDown, TrendingUp, Undo2, Waves, Zap, type LucideIcon } from 'lucide-react';
+import { FADE, passesFloors } from './fade';
 import { derived, type ColumnId } from './columns';
 
 export interface ScannerPreset {
@@ -23,6 +24,28 @@ export const EXTENDED = { preMinChangePct: 3, preMinVolume: 10_000, postMinMoveP
 export const MOMENTUM = { minChangePct: 5, minRvol: 2, maxHodDistPct: 2, min5mPct: 0 };
 
 export const PRESETS: ScannerPreset[] = [
+  {
+    id: 'fade-setups',
+    title: 'Fade Setups',
+    description: `Runners past the spike, ranked by setup stage · price ≥ $${FADE.minPrice}, float ${FADE.minFloat / 1e6}–${FADE.maxFloat / 1e6}M`,
+    icon: ArrowDownRight,
+    filter: (s) => s.fade !== null && s.fade.stage !== 'spike' && passesFloors(s),
+    // Confirmed rejections first: those are the ones you can act on.
+    sort: { colId: 'fadeStage', sort: 'asc' },
+    columns: ['symbol', 'fadeStage', 'last', 'changePct', 'offHighPct', 'sinceHighMin', 'vwapDistPct', 'floatShares', 'rvol', 'tier'],
+    emptyText: 'No runner has spiked 15%+ and extended yet. Setups appear here as they form.',
+  },
+  {
+    id: 'backside-vwap',
+    title: 'Backside VWAP',
+    description: 'Broken runners below VWAP, closest to it first: bounce-into-VWAP shorts',
+    icon: Undo2,
+    filter: (s) =>
+      (s.fade?.stage === 'fade' || s.fade?.stage === 'vwap-bounce') && s.vwap != null && s.last != null && s.last < s.vwap && passesFloors(s),
+    sort: { colId: 'vwapDistPct', sort: 'desc' },
+    columns: ['symbol', 'fadeStage', 'last', 'vwapDistPct', 'vwap', 'offHighPct', 'changePct', 'sinceHighMin', 'floatShares'],
+    emptyText: 'No broken runner is trading under VWAP right now.',
+  },
   {
     id: 'momentum',
     title: 'Momentum',

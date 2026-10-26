@@ -30,6 +30,8 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   block_trade: 0,
   halt: 0,
   resume: 0,
+  rejection_confirmed: 5 * 60_000,
+  vwap_bounce: 5 * 60_000,
 };
 
 const REGULAR_SESSION_MINUTES = 390;

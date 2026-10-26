@@ -1,6 +1,6 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { Bar, ClientMessage, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Bar, ClientMessage, DilutionReport, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
@@ -15,6 +15,8 @@ export interface ClientGatewayOptions {
   getStatus: () => ProviderStatus | null;
   getStats: () => ServerStats;
   getSession: () => MarketSession;
+  /** Undefined when SEC access isn't configured (no SEC_USER_AGENT). */
+  dilution?: (symbol: string) => Promise<DilutionReport | null>;
   logger: Logger;
 }
 
@@ -51,6 +53,10 @@ export class ClientGateway {
       if (url.pathname === '/health') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
+        return;
+      }
+      if (url.pathname === '/api/dilution') {
+        this.serveDilution((url.searchParams.get('symbol') ?? '').toUpperCase(), res);
         return;
       }
       if (url.pathname === '/api/bars') {
@@ -137,6 +143,22 @@ export class ClientGateway {
     if (snapshots.length) this.sendChartBars(snapshots.map((s) => s.symbol));
     if (halts.length) this.broadcast({ type: 'halts', data: halts });
     if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
+  }
+
+  private serveDilution(symbol: string, res: ServerResponse): void {
+    const send = (status: number, body: unknown) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    if (!this.opts.dilution) return send(503, { error: 'SEC_USER_AGENT is not set', setup: true });
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol)) return send(400, { error: 'invalid symbol' });
+    this.opts
+      .dilution(symbol)
+      .then((report) => (report ? send(200, report) : send(404, { error: `SEC has no company for ${symbol}` })))
+      .catch((err: Error) => {
+        this.log.warn({ symbol, err: err.message }, 'dilution report failed');
+        send(502, { error: 'SEC EDGAR request failed' });
+      });
   }
 
   /** Live bar updates go only to clients charting that symbol. */

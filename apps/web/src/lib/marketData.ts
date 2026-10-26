@@ -1,10 +1,13 @@
-import type { Alert, Bar, ClientMessage, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, DilutionReport, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
 
 export type RowsListener = (changed: SymbolSnapshot[], reset: boolean) => void;
 export type AlertsListener = (added: Alert[], reset: boolean) => void;
 export type HaltsListener = (changed: HaltEvent[], reset: boolean) => void;
 export type BarListener = (bar: Bar) => void;
+export type DilutionResult =
+  | { ok: true; report: DilutionReport }
+  | { ok: false; reason: 'setup' | 'not-found' | 'error'; message: string };
 
 const MAX_ALERTS = 1_000;
 const HISTORY_POINTS = 600; // 10 minutes at 1 sample/sec
@@ -66,6 +69,19 @@ class MarketDataClient {
     const res = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}`);
     if (!res.ok) throw new Error(`bars request failed: ${res.status}`);
     return (await res.json()) as Bar[];
+  }
+
+  /** SEC-based dilution report. The server caches these, so repeat calls are cheap. */
+  async fetchDilution(symbol: string): Promise<DilutionResult> {
+    try {
+      const res = await fetch(`/api/dilution?symbol=${encodeURIComponent(symbol)}`);
+      const body = (await res.json()) as DilutionReport | { error: string };
+      if (res.ok) return { ok: true, report: body as DilutionReport };
+      const message = 'error' in body ? body.error : `HTTP ${res.status}`;
+      return { ok: false, reason: res.status === 503 ? 'setup' : res.status === 404 ? 'not-found' : 'error', message };
+    } catch {
+      return { ok: false, reason: 'error', message: 'Could not reach the DeltaScan server' };
+    }
   }
 
   /** Live updates of a symbol's current 1-minute bar. */

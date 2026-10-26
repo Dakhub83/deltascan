@@ -121,8 +121,28 @@ export interface SymbolSnapshot {
   postHigh: number | null;
   postLow: number | null;
   postChangePct: number | null;
+  /** Short-side setup stage, worked out from completed 1-minute bars; null when not in play. */
+  fade: FadeState | null;
   lastTradeAt: EpochMs | null;
   updatedAt: EpochMs;
+}
+
+// ── Fade setups (short side) ──
+
+/** Spike → Extension → Rejection → Confirmation → Fade, plus a backside bounce into VWAP. */
+export type FadeStage = 'spike' | 'extension' | 'rejection' | 'confirmation' | 'fade' | 'vwap-bounce';
+
+export interface FadeState {
+  stage: FadeStage;
+  /** When the current stage began. */
+  since: EpochMs;
+  /** High of the current session (pre-market or regular) and the start of the bar that made it. */
+  high: number;
+  highAt: EpochMs;
+  /** High of the rejection candle: a new high above it invalidates the setup. */
+  rejectionHigh: number | null;
+  /** The rejection candle's low; a close below it confirmed the rejection. */
+  confirmLevel: number | null;
 }
 
 // ── Trading halts ──
@@ -189,6 +209,8 @@ export const ALERT_TYPES = [
   'block_trade',
   'halt',
   'resume',
+  'rejection_confirmed',
+  'vwap_bounce',
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 
@@ -240,3 +262,70 @@ export type ServerMessage =
 export type ClientMessage =
   /** Replaces the set of symbols this client receives live 1-minute bars for. */
   { type: 'chart'; symbols: string[] };
+
+// ── Dilution (SEC EDGAR) ──
+
+/** One reported XBRL value and when it was reported. Values are not split-adjusted. */
+export interface ReportedValue {
+  value: number;
+  /** Period end (balance-sheet date or cover-page date). */
+  asOf: string;
+  form: string;
+  filed: string;
+}
+
+export type DilutionFilingKind = 'offering' | 'registration' | 'effective' | 'equity-sale' | 'agreement' | 'reverse-split' | 'delisting' | 'late' | 'comp-plan';
+
+export interface DilutionFiling {
+  form: string;
+  filed: string;
+  kind: DilutionFilingKind;
+  /** Plain-English description, e.g. "Unregistered sale of equity". */
+  label: string;
+  url: string;
+}
+
+export type RiskLevel = 'low' | 'medium' | 'high';
+
+export interface RiskReason {
+  points: number;
+  text: string;
+}
+
+export interface DilutionReport {
+  symbol: string;
+  cik: string;
+  name: string;
+  exchange: string | null;
+  industry: string | null;
+  location: string | null;
+  sharesOutstanding: ReportedValue | null;
+  /** Cover-page share counts, oldest first, for the trend. */
+  shareHistory: { asOf: string; value: number }[];
+  /** Growth from `shareGrowthSince` to the latest count. Measured from the last drop, since splits aren't adjusted. */
+  shareGrowthPct: number | null;
+  shareGrowthSince: string | null;
+  /** Date of a share-count drop of more than 40% (likely a reverse split), if any in the history. */
+  reverseSplitSuspected: string | null;
+  cash: ReportedValue | null;
+  /** Average monthly operating cash burn over the latest reported period; null if cash-flow positive or unknown. */
+  monthlyBurn: number | null;
+  burnPeriod: { start: string; end: string } | null;
+  cashFlowPositive: boolean;
+  runwayMonths: number | null;
+  /** Banks and lenders: operating cash flow includes loans made, so burn and runway are left out. */
+  financial: boolean;
+  warrants: ReportedValue | null;
+  preferredShares: ReportedValue | null;
+  convertibleDebt: ReportedValue | null;
+  /** Dilution-related filings from the last 12 months, newest first. */
+  filings: DilutionFiling[];
+  /** 8-K item 3.02 filings since the latest balance sheet: raises the cash figure doesn't include yet. */
+  equitySalesSinceBalanceSheet: number;
+  risk: { score: number; level: RiskLevel; reasons: RiskReason[] };
+  /** Per-area ratings for the quote card; null when the SEC data can't judge that area. */
+  ratings: Record<'offering' | 'dilution' | 'frequency' | 'cashNeed' | 'warrants', RiskLevel | null>;
+  /** Files 20-F / 40-F / 6-K: a foreign private issuer (most ADRs are). */
+  foreignFiler: boolean;
+  fetchedAt: EpochMs;
+}

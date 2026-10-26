@@ -9,7 +9,7 @@ import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { ALERT_META } from '../lib/alertMeta';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
-import { requestLayoutSave } from '../lib/layout';
+import { openQuoteFor, requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { IconButton } from '../components/Popover';
 
@@ -158,6 +158,7 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
           getRowClass={getRowClass}
           onGridReady={onGridReady}
           onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
+          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
           asyncTransactionWaitMillis={60}
           overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">Waiting for alerts…</span>'
         />

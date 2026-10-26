@@ -7,7 +7,7 @@ import { Check, ChevronDown, Columns3, Pause, Play } from 'lucide-react';
 import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
-import { requestLayoutSave } from '../lib/layout';
+import { openQuoteFor, requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { ALL_COLUMN_IDS, COLUMNS, type ColumnId } from '../scanners/columns';
 import { PRESETS, PRESETS_BY_ID } from '../scanners/presets';
@@ -223,6 +223,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           onModelUpdated={(e) => setCount(e.api.getDisplayedRowCount())}
           rowSelection={{ mode: 'singleRow', checkboxes: false, enableClickSelection: true }}
           onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
+          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
           onCellFocused={(e) => {
             if (e.rowIndex == null || e.rowPinned) return;
             const sym = e.api.getDisplayedRowAtIndex(e.rowIndex)?.data?.symbol;
