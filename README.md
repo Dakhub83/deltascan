@@ -43,7 +43,10 @@ npm run typecheck
 - The **scanner dropdown** in a window's toolbar switches the scan. The **columns** button shows or hides columns. Drag headers to reorder.
 - **Clicking a row** selects that symbol everywhere and loads it in the Symbol panel. Arrow keys also work.
 - **Alert chips** filter by type. The speaker on each chip turns that type's sound on or off. The first sound plays after your first click on the page, because browsers block audio before that.
-- Layout, column setup and settings are saved automatically. The **Layouts** menu (grid icon, top right) saves named layouts and resets to the default.
+- Layout, column setup and settings are saved automatically. The **Layouts** menu (grid icon, top right) has three options:
+  - **Named layouts:** saved in this browser.
+  - **Save layout to file…:** opens a Save dialog in Chrome and Edge so you can pick the folder; other browsers download the file. **Open layout file…** loads a saved file back.
+  - **Default layout:** resets everything.
 
 ### Charts
 
@@ -96,10 +99,23 @@ The scanner floors and LATE thresholds are in `FADE` (`apps/web/src/scanners/fad
 
 ### Dilution window
 
-**+ Window → Dilution** opens a dilution report in its own browser window, so you can keep it on another monitor. It follows the symbol you click, like the chart.
+**+ Window → Dilution tracker** opens a dilution report as a tab in the layout, next to Symbol and Chart. Drag it anywhere, or use the window's pop-out button to move it to another monitor. It follows the symbol you click, like the chart.
 - **Risk score:** a 0–10 score with the reason behind each point. It weighs cash runway, recent offerings, unregistered equity sales, share-count growth, reverse splits, warrants, convertible debt, delisting notices and late filings.
 - **At a glance:** market cap, shares outstanding, cash, monthly burn, runway, warrants, preferred shares and convertible debt.
 - **Filings:** the last 12 months of dilution-related SEC filings, each linking to the original on sec.gov.
+
+At the top, the tracker shows a live tape strip. It appears for any streamed symbol, with or without SEC data:
+- **Ticker:** sector, country and float.
+- **Price:** last price and % change.
+- **Trend:** the last 60 minutes of price and volume.
+- **Control:** buyers vs sellers, scored 0–100 from where the last 15 one-minute bars closed within their range, weighted by volume. It also shows whether volume is expanding or contracting, the momentum, and a status line such as "▲ RUNNING through $0.99 · 50×+ vol", "▼ REJECTED at $x" or "Below VWAP $x".
+
+Both the Dilution window and the quote card also show:
+- **Company description:** the opening of the latest 10-K or 20-F Business section, with a link to the report.
+- **Country, place of incorporation, and ADR yes/no:** ADR status comes from the annual report's cover, which lists American Depositary Shares when the stock trades as an ADR.
+- **Latest news:** headlines and summaries of the company's own press releases from its 8-K and 6-K filings over the last 60 days. With `ALPACA_KEY_ID` and `ALPACA_SECRET_KEY` in `.env`, Alpaca's newswire headlines are merged in too, newest first, with duplicates removed.
+
+Descriptions are pulled from the filing text by DeltaScan's own rules. They're reliable for most 10-K filers, and rougher for some foreign 20-F filers.
 
 The data comes free from SEC EDGAR. SEC requires a contact on every request, so set `SEC_USER_AGENT="DeltaScan you@example.com"` (with your own email) in `.env` and restart. SEC figures lag the latest filings and aren't split-adjusted. The report doesn't break out individual convertible notes or show float and institutional ownership; those need a paid data provider.
 

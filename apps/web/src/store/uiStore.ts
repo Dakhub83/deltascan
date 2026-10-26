@@ -27,8 +27,8 @@ interface UiState {
   selectedSymbol: string | null;
   settings: Settings;
   /** A one-line message shown under the top bar until dismissed. */
-  notice: string | null;
-  showNotice: (notice: string | null) => void;
+  notice: { text: string; tone: 'info' | 'warn' } | null;
+  showNotice: (text: string | null, tone?: 'info' | 'warn') => void;
   setSelectedSymbol: (symbol: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
 }
@@ -52,7 +52,7 @@ export const useUiStore = create<UiState>()(
         shortLimitsSet: false,
       },
       notice: null,
-      showNotice: (notice) => set({ notice }),
+      showNotice: (text, tone = 'warn') => set({ notice: text === null ? null : { text, tone } }),
       setSelectedSymbol: (selectedSymbol) => set({ selectedSymbol }),
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
     }),

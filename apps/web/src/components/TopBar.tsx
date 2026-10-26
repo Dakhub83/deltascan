@@ -1,10 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Bell,
   BellOff,
   Calculator,
   ChartCandlestick,
   Check,
+  Download,
+  FolderOpen,
   Crosshair,
   LayoutGrid,
   OctagonPause,
@@ -36,8 +38,10 @@ import {
   deleteLayout,
   listLayouts,
   loadLayout,
+  loadLayoutFromText,
   resetLayout,
   saveLayoutAs,
+  saveLayoutToFile,
 } from '../lib/layout';
 import { fmtPct, fmtPrice, signClass } from '../lib/format';
 import { playTone } from '../lib/alertEffects';
@@ -192,7 +196,7 @@ function NewWindowMenu() {
           </MenuItem>
           <MenuItem onClick={() => (addDilutionWindow(), close())}>
             <ShieldAlert className="size-3.5 text-down" />
-            Dilution <span className="ml-auto text-[10px] text-muted">new window</span>
+            Dilution tracker
           </MenuItem>
           <MenuItem onClick={() => (addShortCalcWindow(), close())}>
             <Calculator className="size-3.5 text-warn" />
@@ -219,6 +223,9 @@ function NewWindowMenu() {
 function LayoutMenu() {
   const [, refresh] = useState(0);
   const [name, setName] = useState('');
+  const [hint, setHint] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const showNotice = useUiStore((s) => s.showNotice);
   const layouts = listLayouts();
   const active = activeLayoutName();
   const exists = layouts.some((l) => l.name === name.trim());
@@ -226,10 +233,39 @@ function LayoutMenu() {
 
   const save = (e: FormEvent) => {
     e.preventDefault();
+    if (!name.trim()) return setHint('Type a name for this layout first.');
     if (saveLayoutAs(name)) {
+      setHint(`Saved "${name.trim()}" in this browser.`);
       setName('');
       bump();
     }
+  };
+
+  const saveToFile = (close: () => void) => {
+    // No await before the picker opens: it needs this click's user gesture.
+    saveLayoutToFile(name.trim() || activeLayoutName() || 'DeltaScan layout')
+      .then(({ status, fileName }) => {
+        if (status === 'cancelled') return;
+        close();
+        showNotice(
+          status === 'saved' ? `Layout saved to ${fileName}.` : `Layout downloaded as ${fileName} (this browser can't choose a folder).`,
+          'info',
+        );
+      })
+      .catch((err: Error) => showNotice(`Couldn't save the layout file: ${err.message}`));
+  };
+
+  const openFile = (file: File | undefined, close: () => void) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      try {
+        const loaded = loadLayoutFromText(text);
+        close();
+        showNotice(`Opened layout "${loaded}" from ${file.name}.`, 'info');
+      } catch (err) {
+        showNotice((err as Error).message);
+      }
+    });
   };
 
   return (
@@ -286,19 +322,39 @@ function LayoutMenu() {
           <form onSubmit={save} className="flex items-center gap-1.5 px-1.5 py-1">
             <input
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Save current as…"
+              onChange={(e) => {
+                setName(e.target.value);
+                setHint(null);
+              }}
+              placeholder="Name this layout…"
               maxLength={40}
               className="h-7 min-w-0 flex-1 rounded-md border border-line bg-panel px-2 text-[12px] text-fg outline-none placeholder:text-muted focus:border-accent/60"
             />
-            <button
-              type="submit"
-              disabled={!name.trim()}
-              className="h-7 rounded-md bg-accent px-2.5 text-[12px] font-medium text-white transition-opacity disabled:opacity-40"
-            >
+            <button type="submit" className="h-7 rounded-md bg-accent px-2.5 text-[12px] font-medium text-white">
               {exists ? 'Replace' : 'Save'}
             </button>
           </form>
+          {hint && <div className="px-2.5 pb-1 text-[11px] text-muted">{hint}</div>}
+          <div className="my-1 h-px bg-line" />
+          <MenuItem onClick={() => saveToFile(close)}>
+            <Download className="size-3.5" />
+            Save layout to file…
+          </MenuItem>
+          <MenuItem onClick={() => fileInput.current?.click()}>
+            <FolderOpen className="size-3.5" />
+            Open layout file…
+          </MenuItem>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            aria-label="Layout file"
+            className="hidden"
+            onChange={(e) => {
+              openFile(e.target.files?.[0], close);
+              e.target.value = '';
+            }}
+          />
           <div className="my-1 h-px bg-line" />
           <MenuItem
             onClick={() => {

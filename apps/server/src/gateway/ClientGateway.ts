@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { Bar, ClientMessage, DilutionReport, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Bar, ClientMessage, CompanyProfile, DilutionReport, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
@@ -17,6 +17,8 @@ export interface ClientGatewayOptions {
   getSession: () => MarketSession;
   /** Undefined when SEC access isn't configured (no SEC_USER_AGENT). */
   dilution?: (symbol: string) => Promise<DilutionReport | null>;
+  /** Undefined when neither SEC nor Alpaca news is configured. */
+  profile?: (symbol: string) => Promise<CompanyProfile | null>;
   logger: Logger;
 }
 
@@ -56,7 +58,11 @@ export class ClientGateway {
         return;
       }
       if (url.pathname === '/api/dilution') {
-        this.serveDilution((url.searchParams.get('symbol') ?? '').toUpperCase(), res);
+        this.serveLookup(opts.dilution, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'SEC_USER_AGENT is not set');
+        return;
+      }
+      if (url.pathname === '/api/profile') {
+        this.serveLookup(opts.profile, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'Set SEC_USER_AGENT (and optionally Alpaca keys)');
         return;
       }
       if (url.pathname === '/api/bars') {
@@ -145,18 +151,18 @@ export class ClientGateway {
     if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
   }
 
-  private serveDilution(symbol: string, res: ServerResponse): void {
+  /** Symbol lookups backed by SEC / Alpaca: 503 when not configured, 404 for unknown tickers. */
+  private serveLookup<T>(lookup: ((symbol: string) => Promise<T | null>) | undefined, symbol: string, res: ServerResponse, setupError: string): void {
     const send = (status: number, body: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     };
-    if (!this.opts.dilution) return send(503, { error: 'SEC_USER_AGENT is not set', setup: true });
+    if (!lookup) return send(503, { error: setupError, setup: true });
     if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol)) return send(400, { error: 'invalid symbol' });
-    this.opts
-      .dilution(symbol)
-      .then((report) => (report ? send(200, report) : send(404, { error: `SEC has no company for ${symbol}` })))
+    lookup(symbol)
+      .then((value) => (value ? send(200, value) : send(404, { error: `No filings or news for ${symbol}` })))
       .catch((err: Error) => {
-        this.log.warn({ symbol, err: err.message }, 'dilution report failed');
+        this.log.warn({ symbol, err: err.message }, 'lookup failed');
         send(502, { error: 'SEC EDGAR request failed' });
       });
   }

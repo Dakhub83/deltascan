@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { marketData, type DilutionResult } from '../lib/marketData';
 import { fmtCompact, fmtPct, fmtPrice, signClass } from '../lib/format';
 import { addDilutionWindow } from '../lib/layout';
+import { CompanyDescription, NewsList, useCompanyProfile } from '../components/CompanyInfo';
 import { useUiStore } from '../store/uiStore';
 
 export interface QuotePanelParams {
@@ -93,6 +94,7 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
   const row = useLiveRow(symbol);
   const now = useNow(1_000);
   const [sec, setSec] = useState<DilutionResult | 'loading' | null>(null);
+  const profileResult = useCompanyProfile(symbol);
 
   useEffect(() => {
     panelApi.setTitle(symbol ? `${symbol} · Quote` : 'Quote');
@@ -114,7 +116,8 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
   const shares = report?.sharesOutstanding?.value ?? null;
   const marketCap = price !== null && shares !== null ? price * shares : row?.marketCap ?? null;
   const ssr = row?.low != null && row.prevClose != null && row.low <= row.prevClose * SSR_DROP;
-  const location = report?.location ? (/^[A-Z]{2}$/.test(report.location) ? 'U.S.' : report.location) : null;
+  const profile = profileResult !== 'loading' && profileResult?.ok ? profileResult.profile : null;
+  const location = profile?.country ?? (report?.location ? (/^[A-Z]{2}$/.test(report.location) ? 'United States' : report.location) : null);
 
   // Cash carried forward from the last balance sheet at the reported burn rate.
   let estCash: number | null = null;
@@ -157,14 +160,19 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
             <div className="mt-1 text-[14px] text-dim">{[report?.exchange, location].filter(Boolean).join('  •  ')}</div>
           )}
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-[14px] text-dim">
-            <span>
-              Foreign filer: {report ? <YesNo yes={report.foreignFiler} /> : <Na />}
+            <span title="From the annual report cover: ADRs list American Depositary Shares">
+              ADR: {profile?.adr != null ? <YesNo yes={profile.adr} /> : <Na />}
             </span>
             <span title="Rule 201 short-sale restriction: on once the low is 10% below the prior close. Carry-over from yesterday isn't tracked yet.">
               SSR: {row?.prevClose != null ? <YesNo yes={ssr} /> : <Na />}
             </span>
           </div>
-          {(report?.industry || row?.sector) && <p className="mt-1 text-[12px] text-muted">{report?.industry ?? row?.sector}</p>}
+          {(report?.industry || row?.sector) && <p className="mt-0.5 text-[12px] text-muted">{report?.industry ?? row?.sector}</p>}
+          {(profileResult === 'loading' || profile) && (
+            <div className="mt-1.5">
+              <CompanyDescription profile={profile} loading={profileResult === 'loading'} />
+            </div>
+          )}
         </header>
 
         <section className="grid grid-cols-2 gap-x-6 gap-y-2.5 border-t border-line pt-3">
@@ -225,6 +233,10 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
             {report ? report.equitySalesSinceBalanceSheet : <Na />}
           </Stat>
         </section>
+
+        <Section title="Latest News">
+          <NewsList result={profileResult} />
+        </Section>
 
         <Section title="Recent Splits">
           {report?.reverseSplitSuspected || splits.length ? (

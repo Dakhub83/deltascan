@@ -63,7 +63,7 @@ npm run typecheck    # all workspaces
 - **Dilution window**: `panels/DilutionPanel.tsx`.
   - Server: `fundamentals/SecClient.ts` fetches SEC EDGAR (rate-limited, 6 h cache, needs `SEC_USER_AGENT`). `fundamentals/dilution.ts` is a pure builder (tests in `test/dilution.test.ts`). The endpoint is `GET /api/dilution?symbol=`; it returns 503 when not configured and 404 for unknown tickers, including the mock's made-up ones.
   - Score heuristics: runway is skipped for SIC 6000–6799 (financials). Prospectus and shelf filings don't count for issuers with an S-3ASR (well-known seasoned issuers, usually debt deals). Share growth is measured from the last >40 % drop, because XBRL isn't split-adjusted.
-  - **+ Window → Dilution** opens it as a dockview pop-out (a separate browser window).
+  - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
 
 - **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
   - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `rejection_confirmed` and `vwap_bounce` alerts, and replays backfill silently.
@@ -73,6 +73,19 @@ npm run typecheck    # all workspaces
   - Not built yet: an overhang badge and warrant/conversion price lines on the chart, a 9:30–10:30 focus highlight, UI editing of detector thresholds, and DAS position sync.
 
 - **Quote card**: `panels/QuotePanel.tsx`. Row double-click (Filter, Alert and Halt panels) calls `openQuoteFor` in `lib/layout.ts`, which pops out one window per symbol and focuses it if it already exists. The card uses the live snapshot plus `DilutionReport.ratings` / `foreignFiler` from `dilution.ts`. SSR is computed client-side (low ≤ 90 % of prevClose; carry-over from the prior day isn't tracked). Gap analysis and news aren't built yet: they need daily bars and a news feed (Alpaca has both).
+
+- **Layout files**: `saveLayoutToFile` / `loadLayoutFromText` in `lib/layout.ts`. The JSON has `{ app: 'DeltaScan', kind: 'layout', version: 1, name, savedAt, layout }`. It uses `showSaveFilePicker` when available (call it straight from the click, since it needs the user gesture) and falls back to a download. A one-line notice bar (`uiStore.showNotice`) reports results.
+
+- **Company profile & news**: `GET /api/profile` → `CompanyProfile`, served by `fundamentals/ProfileService.ts`.
+  - It merges `SecClient.profile`: description from the annual report (≤ 5 MB streamed; SEC ignores Range headers), country, incorporation, ADR from the cover page, and EX-99.1 press releases from recent 8-K / 6-K filings.
+  - Alpaca news (`AlpacaNews.ts`) is added when the Alpaca keys are set; its live behaviour hasn't been tested yet.
+  - Parsers are in `fundamentals/filingText.ts` (tests in `test/filingText.test.ts`). The web side is `components/CompanyInfo.tsx`.
+  - When editing regex-heavy files with Python, use a quoted heredoc and raw strings: `` once became a literal backspace byte.
+
+- **Tape strip** (top of the Dilution tracker): `components/TapeStrip.tsx`, with the logic in `lib/tape.ts` (`readTape`, tests in `tape.test.ts`).
+  - Minute bars come from `marketData.watchMinuteBars` / `getMinuteBars` via `useSyncExternalStore`: a shared, ref-counted store that loads history once, merges live bars and notifies at most once a second.
+  - Don't keep bar data in component refs that effects reset: under React dev double-mounting inside dockview, the visible copy froze on "Waiting for bars…".
+  - Share class (e.g. "Class A") isn't in SEC's structured data.
 
 ### Still to do (in order)
 1. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev`, then merge into `main`.

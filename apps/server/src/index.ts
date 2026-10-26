@@ -6,6 +6,8 @@ import { AlertEngine } from './scanner/AlertEngine';
 import { HaltTracker } from './scanner/HaltTracker';
 import { FadeDetector } from './scanner/FadeDetector';
 import { SecClient } from './fundamentals/SecClient';
+import { AlpacaNews } from './fundamentals/AlpacaNews';
+import { ProfileService } from './fundamentals/ProfileService';
 import { ClientGateway } from './gateway/ClientGateway';
 import { marketSessionAt, mockSessionFraction, regularSessionFraction, tradeSessionAt } from './market/sessionClock';
 
@@ -41,6 +43,9 @@ const halts = new HaltTracker({
 
 const sec = env.SEC_USER_AGENT ? new SecClient(env.SEC_USER_AGENT, logger) : null;
 if (!sec) logger.warn('SEC_USER_AGENT not set: the Dilution window is disabled');
+// News works with Alpaca keys even when streaming the mock feed.
+const alpacaNews = env.ALPACA_KEY_ID && env.ALPACA_SECRET_KEY ? new AlpacaNews(env.ALPACA_KEY_ID, env.ALPACA_SECRET_KEY) : null;
+const profiles = new ProfileService(sec, alpacaNews, logger);
 
 let gateway: ClientGateway | null = null;
 const ingestion = new IngestionService(env, store, alerts, halts, logger, (status) =>
@@ -68,6 +73,7 @@ gateway = new ClientGateway({
   getStats: () => ({ ...lastStats, session: currentSession() }),
   getSession: currentSession,
   dilution: sec ? (symbol) => sec.dilution(symbol) : undefined,
+  profile: profiles.enabled ? (symbol) => profiles.profile(symbol) : undefined,
   logger,
 });
 

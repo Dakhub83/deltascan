@@ -116,6 +116,78 @@ export function deleteLayout(name: string): void {
   if (activeLayoutName() === name) setActiveName(null);
 }
 
+// ── Layout files ──
+
+/** The File System Access API (Chrome/Edge); TypeScript's DOM types don't include it yet. */
+interface FilePickerWindow {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<{ name: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> }>;
+}
+
+interface LayoutFile {
+  app: 'DeltaScan';
+  kind: 'layout';
+  version: 1;
+  name: string;
+  savedAt: string;
+  layout: SerializedDockview;
+}
+
+/**
+ * Saves the current layout as a JSON file. Chrome and Edge show a Save dialog so the trader picks
+ * the folder; other browsers download it. Must be called straight from a click: the dialog
+ * needs a user gesture, so nothing may be awaited before it opens.
+ */
+export async function saveLayoutToFile(name: string): Promise<{ status: 'saved' | 'downloaded' | 'cancelled'; fileName: string }> {
+  if (!api) throw new Error('Layout not ready');
+  const file: LayoutFile = { app: 'DeltaScan', kind: 'layout', version: 1, name, savedAt: new Date().toISOString(), layout: api.toJSON() };
+  const data = JSON.stringify(file, null, 2);
+  const suggestedName = `${name.replace(/[\/:*?"<>|]+/g, '-').trim() || 'deltascan-layout'}.json`;
+
+  const picker = (window as FilePickerWindow).showSaveFilePicker;
+  if (picker) {
+    try {
+      const handle = await picker({ suggestedName, types: [{ description: 'DeltaScan layout', accept: { 'application/json': ['.json'] } }] });
+      const writable = await handle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      return { status: 'saved', fileName: handle.name };
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return { status: 'cancelled', fileName: suggestedName };
+      throw err;
+    }
+  }
+  const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: suggestedName });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  return { status: 'downloaded', fileName: suggestedName };
+}
+
+/** Applies a layout file's contents. Throws a readable error if it isn't a DeltaScan layout. */
+export function loadLayoutFromText(text: string): string {
+  if (!api) throw new Error('Layout not ready');
+  let file: Partial<LayoutFile>;
+  try {
+    file = JSON.parse(text) as Partial<LayoutFile>;
+  } catch {
+    throw new Error("That file isn't valid JSON.");
+  }
+  if (file.app !== 'DeltaScan' || file.kind !== 'layout' || !file.layout) throw new Error("That file isn't a DeltaScan layout.");
+  const previous = api.toJSON();
+  try {
+    api.fromJSON(file.layout);
+  } catch {
+    api.fromJSON(previous);
+    throw new Error("That layout file couldn't be opened; your current layout was kept.");
+  }
+  setActiveName(null);
+  requestLayoutSave();
+  return file.name ?? 'layout';
+}
+
 /** New windows open floating so they're immediately visible; drag a tab to dock it. */
 const floating = () => ({ width: 640, height: 400, x: 120 + Math.random() * 120, y: 80 + Math.random() * 80 });
 
@@ -137,8 +209,28 @@ export function addSymbolWindow(): void {
  * Opens the Dilution window in its own browser window, so it can sit on another monitor and
  * follow whatever you click. Stays floating if the browser blocks the pop-up.
  */
+/**
+ * The Dilution tracker, docked in the layout as a tab beside the Symbol / Chart windows (or on
+ * the right if those are closed). A pinned symbol that already has one, or the linked tracker
+ * when no symbol is given, is brought forward instead of opening a duplicate.
+ */
 export function addDilutionWindow(params: { symbol?: string; linked?: boolean } = {}): void {
-  popOut('dilution', 'Dilution', params, 560, 760);
+  if (!api) return;
+  const existing = api.panels.find((p) => {
+    if (p.api.component !== 'dilution') return false;
+    const current = p.params as { symbol?: string; linked?: boolean } | undefined;
+    return params.symbol ? current?.linked === false && current.symbol === params.symbol : current?.linked !== false;
+  });
+  if (existing) return existing.api.setActive();
+  const neighbour = api.panels.find((p) => p.api.component === 'symbol' || p.api.component === 'chart');
+  const panel = api.addPanel({
+    id: `dilution-${uid()}`,
+    component: 'dilution',
+    title: 'Dilution',
+    params,
+    position: neighbour ? { referencePanel: neighbour.id, direction: 'within' } : { direction: 'right' },
+  });
+  panel.api.setActive();
 }
 
 /** Opens `component` in its own browser window, cascaded so repeat windows don't stack exactly. */

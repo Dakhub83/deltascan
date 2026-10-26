@@ -3,7 +3,9 @@ import type { IDockviewPanelProps } from 'dockview';
 import type { DilutionFilingKind, DilutionReport, ReportedValue, SymbolSnapshot } from '@deltascan/shared';
 import { ExternalLink, Link2, Link2Off, ShieldAlert } from 'lucide-react';
 import clsx from 'clsx';
-import { marketData, type DilutionResult } from '../lib/marketData';
+import { marketData, type DilutionResult, type ProfileResult } from '../lib/marketData';
+import { CompanyDescription, CompanyFacts, NewsList, useCompanyProfile } from '../components/CompanyInfo';
+import { TapeStrip } from '../components/TapeStrip';
 import { fmtCompact, fmtPct, fmtPrice, signClass } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
@@ -64,7 +66,18 @@ function Stat({ label, value, unit, note, tone }: { label: string; value: ReactN
   );
 }
 
-function Report({ report, row, simulated }: { report: DilutionReport; row: SymbolSnapshot | null; simulated: boolean }) {
+function Report({
+  report,
+  row,
+  simulated,
+  profile,
+}: {
+  report: DilutionReport;
+  row: SymbolSnapshot | null;
+  simulated: boolean;
+  profile: ProfileResult | 'loading' | null;
+}) {
+  const companyProfile = profile !== 'loading' && profile?.ok ? profile.profile : null;
   const [showAll, setShowAll] = useState(false);
   const level = LEVEL[report.risk.level];
   const price = row?.last ?? null;
@@ -92,14 +105,17 @@ function Report({ report, row, simulated }: { report: DilutionReport; row: Symbo
         </div>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-[28px] leading-none font-bold tracking-tight text-fg">${report.symbol}</span>
-          {price !== null && <span className="num text-[16px] font-semibold text-fg">{fmtPrice(price)}</span>}
-          {row?.changePct != null && <span className={clsx('num text-[14px] font-semibold', signClass(row.changePct))}>{fmtPct(row.changePct, 1)}</span>}
-          {row && <span className="num text-[11px] text-muted">Vol {fmtCompact(row.volume)}</span>}
+          {/* Price and change are in the tape strip above when the symbol is streaming. */}
+          {!row && price !== null && <span className="num text-[16px] font-semibold text-fg">{fmtPrice(price)}</span>}
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
           {[report.industry, report.location, `CIK ${Number(report.cik)}`].filter(Boolean).map((tag) => (
             <span key={tag} className="rounded-md bg-line px-1.5 py-0.5 text-dim">{tag}</span>
           ))}
+        </div>
+        <CompanyFacts profile={companyProfile} className="mt-2 text-[11px] text-dim" />
+        <div className="mt-2">
+          <CompanyDescription profile={companyProfile} loading={profile === 'loading'} />
         </div>
       </section>
 
@@ -190,6 +206,11 @@ function Report({ report, row, simulated }: { report: DilutionReport; row: Symbo
         </div>
       </section>
 
+      <section className="rounded-xl border border-line bg-raised/40 px-4 py-2.5">
+        <div className="mb-1 text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Latest news</div>
+        <NewsList result={profile} />
+      </section>
+
       <section className="rounded-xl border border-line bg-raised/40">
         <div className="flex items-baseline justify-between border-b border-line px-4 py-2.5">
           <span className="text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">
@@ -233,6 +254,7 @@ export function DilutionPanel({ params, api: panelApi }: IDockviewPanelProps<Dil
   const simulated = useUiStore((s) => s.provider?.provider === 'mock');
   const symbol = (linked ? selected : params.symbol) ?? null;
   const row = useLiveRow(symbol);
+  const profile = useCompanyProfile(symbol);
   const [result, setResult] = useState<DilutionResult | 'loading' | null>(null);
   const [draft, setDraft] = useState('');
 
@@ -301,15 +323,24 @@ export function DilutionPanel({ params, api: panelApi }: IDockviewPanelProps<Dil
         <span className="ml-auto text-[10px] font-medium tracking-wider text-muted uppercase">SEC EDGAR</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {row && (
+          <div className="px-3 pt-3">
+            <TapeStrip
+              row={row}
+              country={profile !== 'loading' && profile?.ok ? profile.profile.country : null}
+              sector={row.sector ?? (result !== 'loading' && result?.ok ? result.report.industry : null)}
+            />
+          </div>
+        )}
         {body !== null ? (
-          <div className="grid h-full place-items-center p-6">
+          <div className={clsx('grid place-items-center p-6', !row && 'h-full')}>
             <div className="flex max-w-sm flex-col items-center gap-2 text-center text-[12px] leading-relaxed text-muted">
               <ShieldAlert className="size-6 text-muted/60" />
               <div>{body}</div>
             </div>
           </div>
         ) : (
-          result !== 'loading' && result?.ok && <Report key={result.report.symbol} report={result.report} row={row} simulated={simulated} />
+          result !== 'loading' && result?.ok && <Report key={result.report.symbol} report={result.report} row={row} simulated={simulated} profile={profile} />
         )}
       </div>
     </div>

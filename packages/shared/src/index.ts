@@ -329,3 +329,31 @@ export interface DilutionReport {
   foreignFiler: boolean;
   fetchedAt: EpochMs;
 }
+
+// ── Company profile & news ──
+
+export interface NewsItem {
+  headline: string;
+  summary: string | null;
+  url: string;
+  /** "SEC 8-K" for press releases, otherwise the newswire's source name. */
+  source: string;
+  publishedAt: EpochMs;
+  kind: 'press-release' | 'newswire';
+}
+
+export interface CompanyProfile {
+  symbol: string;
+  /** Opening of the Business section of the latest annual report (10-K Item 1 / 20-F Item 4). */
+  description: string | null;
+  descriptionSource: { form: string; filed: string; url: string } | null;
+  /** Country of the business address; "United States" for US states. */
+  country: string | null;
+  incorporatedIn: string | null;
+  /** True when the annual report's cover lists American Depositary Shares; null if unknown. */
+  adr: boolean | null;
+  /** Newest first: SEC press releases, plus Alpaca news when keys are configured. */
+  news: NewsItem[];
+  newsSources: ('sec' | 'alpaca')[];
+  fetchedAt: EpochMs;
+}

@@ -1,10 +1,16 @@
-import type { Alert, Bar, ClientMessage, DilutionReport, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, CompanyProfile, DilutionReport, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
+import { upsertBar } from './chartData';
 
 export type RowsListener = (changed: SymbolSnapshot[], reset: boolean) => void;
 export type AlertsListener = (added: Alert[], reset: boolean) => void;
 export type HaltsListener = (changed: HaltEvent[], reset: boolean) => void;
 export type BarListener = (bar: Bar) => void;
+export type ProfileResult =
+  | { ok: true; profile: CompanyProfile }
+  | { ok: false; reason: 'setup' | 'not-found' | 'error'; message: string };
+/** Profiles are slow to build (annual report + press releases); windows showing the same symbol share one request. */
+const PROFILE_TTL_MS = 2 * 60_000;
 export type DilutionResult =
   | { ok: true; report: DilutionReport }
   | { ok: false; reason: 'setup' | 'not-found' | 'error'; message: string };
@@ -12,6 +18,20 @@ export type DilutionResult =
 const MAX_ALERTS = 1_000;
 const HISTORY_POINTS = 600; // 10 minutes at 1 sample/sec
 const HISTORY_SAMPLE_MS = 1_000;
+/** Minute-bar watchers are notified at most this often. */
+const MINUTE_BARS_NOTIFY_MS = 1_000;
+const MINUTE_BARS_RETRY_MS = 2_000;
+
+/** One symbol's 1-minute bars, shared by every window watching it. */
+interface MinuteBarsEntry {
+  bars: Bar[];
+  /** Immutable copy handed to React; replaced only when something changed. */
+  snapshot: Bar[];
+  dirty: boolean;
+  watchers: Set<() => void>;
+  stop: () => void;
+}
+const EMPTY_BARS: Bar[] = [];
 const RECONNECT_MAX_MS = 10_000;
 
 /**
@@ -71,6 +91,26 @@ class MarketDataClient {
     return (await res.json()) as Bar[];
   }
 
+  private readonly profiles = new Map<string, { at: number; result: Promise<ProfileResult> }>();
+
+  /** Description, country, ADR status and news for a symbol. */
+  fetchProfile(symbol: string): Promise<ProfileResult> {
+    const hit = this.profiles.get(symbol);
+    if (hit && Date.now() - hit.at < PROFILE_TTL_MS) return hit.result;
+    const result = fetch(`/api/profile?symbol=${encodeURIComponent(symbol)}`)
+      .then(async (res): Promise<ProfileResult> => {
+        const body = (await res.json()) as CompanyProfile | { error: string };
+        if (res.ok) return { ok: true, profile: body as CompanyProfile };
+        const message = 'error' in body ? body.error : `HTTP ${res.status}`;
+        return { ok: false, reason: res.status === 503 ? 'setup' : res.status === 404 ? 'not-found' : 'error', message };
+      })
+      .catch((): ProfileResult => ({ ok: false, reason: 'error', message: 'Could not reach the DeltaScan server' }));
+    this.profiles.set(symbol, { at: Date.now(), result });
+    // Don't keep failures around: the next window should retry.
+    void result.then((r) => !r.ok && this.profiles.delete(symbol));
+    return result;
+  }
+
   /** SEC-based dilution report. The server caches these, so repeat calls are cheap. */
   async fetchDilution(symbol: string): Promise<DilutionResult> {
     try {
@@ -82,6 +122,59 @@ class MarketDataClient {
     } catch {
       return { ok: false, reason: 'error', message: 'Could not reach the DeltaScan server' };
     }
+  }
+
+  private readonly minuteBars = new Map<string, MinuteBarsEntry>();
+
+  /**
+   * Watches a symbol's 1-minute bars (history + live). For useSyncExternalStore: the data lives
+   * here, not in a component, so React re-mounting a panel can't leave a stale copy on screen.
+   */
+  watchMinuteBars(symbol: string, onChange: () => void): () => void {
+    let entry = this.minuteBars.get(symbol);
+    if (!entry) {
+      const e: MinuteBarsEntry = { bars: [], snapshot: EMPTY_BARS, dirty: false, watchers: new Set(), stop: () => {} };
+      let stopped = false;
+      const off = this.onBars(symbol, (bar) => {
+        upsertBar(e.bars, bar);
+        e.dirty = true;
+      });
+      const load = () =>
+        this.fetchBars(symbol)
+          .then((history) => {
+            const last = history.at(-1)?.timestamp ?? -Infinity;
+            e.bars = [...history, ...e.bars.filter((b) => b.timestamp > last)];
+            e.dirty = true;
+            flush();
+          })
+          .catch(() => !stopped && setTimeout(load, MINUTE_BARS_RETRY_MS));
+      const flush = () => {
+        if (!e.dirty) return;
+        e.dirty = false;
+        e.snapshot = [...e.bars];
+        e.watchers.forEach((fn) => fn());
+      };
+      const timer = setInterval(flush, MINUTE_BARS_NOTIFY_MS);
+      e.stop = () => {
+        stopped = true;
+        off();
+        clearInterval(timer);
+      };
+      void load();
+      this.minuteBars.set(symbol, (entry = e));
+    }
+    const current = entry;
+    current.watchers.add(onChange);
+    return () => {
+      current.watchers.delete(onChange);
+      if (current.watchers.size) return;
+      current.stop();
+      this.minuteBars.delete(symbol);
+    };
+  }
+
+  getMinuteBars(symbol: string): Bar[] {
+    return this.minuteBars.get(symbol)?.snapshot ?? EMPTY_BARS;
   }
 
   /** Live updates of a symbol's current 1-minute bar. */

@@ -20,9 +20,19 @@ export interface Submissions {
   sic?: string;
   exchanges?: string[];
   sicDescription?: string;
-  addresses?: { business?: { stateOrCountryDescription?: string | null } };
+  addresses?: Partial<Record<'business' | 'mailing', { stateOrCountry?: string | null; stateOrCountryDescription?: string | null }>>;
+  stateOfIncorporation?: string;
+  stateOfIncorporationDescription?: string;
   filings: {
-    recent: { form: string[]; filingDate: string[]; items: string[]; accessionNumber: string[]; primaryDocument: string[] };
+    recent: {
+      form: string[];
+      filingDate: string[];
+      /** ISO timestamp the filing was accepted; more precise than filingDate. */
+      acceptanceDateTime?: string[];
+      items: string[];
+      accessionNumber: string[];
+      primaryDocument: string[];
+    };
   };
 }
 
