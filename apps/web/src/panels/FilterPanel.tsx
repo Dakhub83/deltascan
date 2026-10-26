@@ -7,7 +7,7 @@ import { Check, ChevronDown, Columns3, Pause, Play } from 'lucide-react';
 import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
-import { openQuoteFor, requestLayoutSave } from '../lib/layout';
+import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { ALL_COLUMN_IDS, COLUMNS, type ColumnId } from '../scanners/columns';
 import { PRESETS, PRESETS_BY_ID } from '../scanners/presets';
@@ -31,6 +31,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => visibleFrom(params.columnState, preset.columns));
   const selectedSymbol = useUiStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
+  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
 
   const columnDefs = useMemo<ColDef<SymbolSnapshot>[]>(() => {
     const ordered = [...preset.columns, ...ALL_COLUMN_IDS.filter((id) => !preset.columns.includes(id))];
@@ -222,8 +223,11 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && presetRef.current.filter(node.data)}
           onModelUpdated={(e) => setCount(e.api.getDisplayedRowCount())}
           rowSelection={{ mode: 'singleRow', checkboxes: false, enableClickSelection: true }}
-          onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
-          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
+          onRowClicked={(e) => {
+            if (!e.data) return;
+            setSelectedSymbol(e.data.symbol);
+            onSymbolClick(e.data.symbol);
+          }}
           onCellFocused={(e) => {
             if (e.rowIndex == null || e.rowPinned) return;
             const sym = e.api.getDisplayedRowAtIndex(e.rowIndex)?.data?.symbol;

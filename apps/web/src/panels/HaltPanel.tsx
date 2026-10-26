@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
-import { openQuoteFor } from '../lib/layout';
+import { openQuoteFor, symbolDoubleClick } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 
 const NEW_ROW_MS = 2_500;
@@ -80,6 +80,7 @@ export function HaltPanel() {
   const gridApi = useRef<GridApi<HaltEvent> | null>(null);
   const [counts, setCounts] = useState({ active: 0, total: 0 });
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
+  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
 
   const resetRows = useCallback(() => {
     const rows = [...marketData.halts.values()].sort(byActivityThenTime);
@@ -140,8 +141,11 @@ export function HaltPanel() {
           getRowId={getRowId}
           getRowClass={getRowClass}
           onGridReady={onGridReady}
-          onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
-          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
+          onRowClicked={(e) => {
+            if (!e.data) return;
+            setSelectedSymbol(e.data.symbol);
+            onSymbolClick(e.data.symbol);
+          }}
           overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">No halts today</span>'
         />
       </div>

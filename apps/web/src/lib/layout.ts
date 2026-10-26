@@ -1,5 +1,6 @@
 import type { DockviewApi, SerializedDockview } from 'dockview';
 import { PRESETS_BY_ID } from '../scanners/presets';
+import { useUiStore } from '../store/uiStore';
 
 const STORAGE_KEY = 'deltascan.layout.v1';
 const NAMED_KEY = 'deltascan.layouts.v1';
@@ -143,10 +144,40 @@ export function addDilutionWindow(params: { symbol?: string; linked?: boolean } 
 /** Opens `component` in its own browser window, cascaded so repeat windows don't stack exactly. */
 function popOut(component: string, title: string, params: object, width: number, height: number): void {
   if (!api) return;
-  const offset = (api.panels.filter((p) => p.api.component === component).length % 6) * 28;
-  const panel = api.addPanel({ id: `${component}-${uid()}`, component, title, params, floating: { ...floating(), width, height } });
-  const left = window.screenX + Math.max(0, window.outerWidth - width - 40) - offset;
-  void api.addPopoutGroup(panel, { position: { left, top: window.screenY + 80 + offset, width, height } });
+  const dock = api;
+  const offset = (dock.panels.filter((p) => p.api.component === component).length % 6) * 28;
+  const add = () => dock.addPanel({ id: `${component}-${uid()}`, component, title, params, floating: { ...floating(), width, height } });
+  const panel = add();
+  // dockview adds window.screenX/Y itself, so the position is relative to this window.
+  const position = { left: Math.max(0, window.outerWidth - width - 40) - offset, top: 80 + offset, width, height };
+  void dock.addPopoutGroup(panel, { position }).then((opened) => {
+    if (opened) return;
+    // Pop-up blocked: dockview drops the panel, so show it floating in this window instead.
+    if (!dock.getPanel(panel.id)) add().api.setActive();
+    useUiStore.getState().showNotice(
+      'Your browser blocked the pop-up window, so it opened here instead. Allow pop-ups for this site (icon at the right of the address bar) to get separate windows.',
+    );
+  });
+}
+
+const DOUBLE_CLICK_MS = 450;
+
+/**
+ * Returns a row-click handler that calls `onDouble` on a second click of the same symbol.
+ * Native dblclick is unreliable in live grids: the browser only fires it when both clicks hit
+ * the same element, and cells are re-rendered (price flashes) and rows re-sorted between clicks.
+ */
+export function symbolDoubleClick(onDouble: (symbol: string) => void): (symbol: string) => void {
+  let last = { symbol: '', at: 0 };
+  return (symbol) => {
+    const now = performance.now();
+    if (symbol === last.symbol && now - last.at < DOUBLE_CLICK_MS) {
+      last = { symbol: '', at: 0 };
+      onDouble(symbol);
+    } else {
+      last = { symbol, at: now };
+    }
+  };
 }
 
 /**

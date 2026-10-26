@@ -9,7 +9,7 @@ import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { ALERT_META } from '../lib/alertMeta';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
-import { openQuoteFor, requestLayoutSave } from '../lib/layout';
+import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { IconButton } from '../components/Popover';
 
@@ -49,6 +49,7 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
   filterRef.current = { types, clearedAt };
   const [count, setCount] = useState(0);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
+  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
   const audibleTypes = useUiStore((s) => s.settings.audibleTypes);
   const updateSettings = useUiStore((s) => s.updateSettings);
 
@@ -157,8 +158,11 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
           getRowId={getRowId}
           getRowClass={getRowClass}
           onGridReady={onGridReady}
-          onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
-          onRowDoubleClicked={(e) => e.data && openQuoteFor(e.data.symbol)}
+          onRowClicked={(e) => {
+            if (!e.data) return;
+            setSelectedSymbol(e.data.symbol);
+            onSymbolClick(e.data.symbol);
+          }}
           asyncTransactionWaitMillis={60}
           overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">Waiting for alerts…</span>'
         />
