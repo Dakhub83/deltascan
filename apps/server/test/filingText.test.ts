@@ -6,7 +6,9 @@ import {
   firstSentences,
   htmlToLines,
   incorporationFrom,
+  parseOfferingAmount,
   parsePressRelease,
+  parseReverseSplit,
 } from '../src/fundamentals/filingText';
 import { toNewsItem } from '../src/fundamentals/AlpacaNews';
 import { mergeNews } from '../src/fundamentals/ProfileService';
@@ -69,6 +71,55 @@ describe('filing text', () => {
     expect(countryFrom(null, null)).toBeNull();
     expect(incorporationFrom('NV', 'NV')).toBe('Nevada');
     expect(incorporationFrom('E9', 'CAYMAN ISLANDS')).toBe('Cayman Islands');
+  });
+});
+
+describe('reverse splits', () => {
+  const lines = (...paras: string[]) => htmlToLines(paras.map((p) => `<p>${p}</p>`).join(''));
+
+  it('reads the ratio, effective date and resulting share count', () => {
+    const doc = lines(
+      'Item 5.03 Amendments to Articles of Incorporation.',
+      'On July 29, 2026, the Company filed a Certificate of Amendment to effect a 1-for-5 reverse stock split of its common stock. The Reverse Stock Split became effective at 12:01 a.m. Eastern Time on July 31, 2026.',
+      'Following the reverse split, there will be approximately 649,914 shares of common stock issued and outstanding.',
+    );
+    expect(parseReverseSplit(doc)).toEqual({ ratio: 5, effective: '2026-07-31', sharesAfter: 649_914 });
+  });
+
+  it('reads ratios written in words and ignores the approved range', () => {
+    const doc = lines(
+      'At the annual meeting, stockholders approved a reverse stock split at a ratio in the range of 1-for-2 to 1-for-50.',
+      'The Board then approved a one-for-twenty (1:20) reverse stock split, effective on March 3, 2026.',
+    );
+    expect(parseReverseSplit(doc)).toEqual({ ratio: 20, effective: '2026-03-03', sharesAfter: null });
+  });
+
+  it('returns null for charter amendments that are not splits', () => {
+    expect(parseReverseSplit(lines('The Board amended the Bylaws to change the quorum requirement.'))).toBeNull();
+    expect(parseReverseSplit(lines('Stockholders approved a reverse stock split within a range of 1-for-2 to 1-for-30 at the discretion of the Board.'))).toBeNull();
+  });
+});
+
+describe('offering amounts', () => {
+  const lines = (text: string) => htmlToLines(`<p>${text}</p>`);
+
+  it('reads ATM maximums, gross proceeds and resales', () => {
+    expect(parseOfferingAmount(lines('We may offer and sell shares of our common stock having an aggregate offering price of up to $10,500,000 from time to time.'))).toEqual({
+      value: 10_500_000,
+      upTo: true,
+      resale: false,
+    });
+    expect(parseOfferingAmount(lines('Common stock, par value $0.0001. We expect to receive gross proceeds of approximately $4.0 million from this offering.'))).toEqual({
+      value: 4_000_000,
+      upTo: false,
+      resale: false,
+    });
+    expect(parseOfferingAmount(lines('The selling stockholders may sell shares. We will not receive any of the proceeds from the sale of the shares.'))).toEqual({
+      value: null,
+      upTo: false,
+      resale: true,
+    });
+    expect(parseOfferingAmount(lines('Par value $0.001 per share.'))).toBeNull();
   });
 });
 

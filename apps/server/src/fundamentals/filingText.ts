@@ -31,7 +31,7 @@ export function htmlToLines(html: string): string[] {
 }
 
 /** A period after these doesn't end a sentence ("Vivakor, Inc. announced…", "U.S. operations"). */
-const ABBREVIATION = /\b(inc|corp|co|ltd|llc|plc|no|nos|mr|ms|mrs|dr|st|jr|sr|vs|approx|u\.s|e\.g|i\.e|n\.v|s\.a)\.$/i;
+const ABBREVIATION = /\b(inc|corp|co|ltd|llc|plc|no|nos|mr|ms|mrs|dr|st|jr|sr|vs|approx|u\.s|e\.g|i\.e|n\.v|s\.a|a\.m|p\.m)\.$/i;
 
 export function splitSentences(text: string): string[] {
   const out: string[] = [];
@@ -176,3 +176,78 @@ export function countryFrom(code: string | null | undefined, description: string
 }
 
 const titleCase = (s: string) => (s === s.toUpperCase() ? s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : s);
+
+const WORD_NUMBERS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  fifteen: 15, sixteen: 16, eighteen: 18, twenty: 20, 'twenty-five': 25, thirty: 30, 'thirty-five': 35, forty: 40,
+  fifty: 50, sixty: 60, seventy: 70, 'seventy-five': 75, eighty: 80, hundred: 100, 'one hundred': 100, 'two hundred': 200,
+  'two hundred fifty': 250,
+};
+const NUMBER = String.raw`(\d{1,4}|${Object.keys(WORD_NUMBERS).sort((a, b) => b.length - a.length).join('|')})`;
+/** "1-for-5", "one-for-twenty (1:20)", "1:10". */
+const RATIO = new RegExp(String.raw`\b(?:1|one)\s*(?:[-‐–]\s*for\s*[-‐–]|\s+for\s+|:)\s*${NUMBER}\b`, 'gi');
+/** Shareholder approvals give a range ("between 1-for-2 and 1-for-30"); those ratios aren't the split. */
+const RANGE = /\brange\b|\bbetween\b|\bup to\b|\bnot (?:less|more|greater) than\b|\bwithin\b|\bdiscretion\b/i;
+const REVERSE = /reverse (?:stock |share )?split|share consolidation/i;
+const LONG_DATE = /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s+(\d{4})\b/;
+const SHARES_AFTER = /(?:approximately|about)\s+([\d,]{5,})\s+shares of (?:the Company[’']s |our )?(?:common stock|ordinary shares|class a common stock)[^.]{0,80}?\boutstanding/i;
+
+const toNumber = (s: string) => (/^\d/.test(s) ? Number(s) : WORD_NUMBERS[s.toLowerCase()]);
+const isoDate = (m: RegExpMatchArray) =>
+  new Date(Date.UTC(Number(m[3]), new Date(`${m[1]} 1, 2000`).getMonth(), Number(m[2]))).toISOString().slice(0, 10);
+
+/**
+ * A reverse split's ratio, effective date and resulting share count from an 8-K (item 5.03 / 3.03).
+ * Null when the filing doesn't announce a split or only authorizes a range of ratios.
+ */
+export function parseReverseSplit(lines: string[]): { ratio: number | null; effective: string | null; sharesAfter: number | null } | null {
+  const sentences = splitSentences(lines.join(' ')).filter((s) => REVERSE.test(s) || SHARES_AFTER.test(s));
+  if (!sentences.some((s) => REVERSE.test(s))) return null;
+
+  const counts = new Map<number, number>();
+  for (const s of sentences) {
+    if (!REVERSE.test(s) || RANGE.test(s)) continue;
+    for (const m of s.matchAll(RATIO)) {
+      const n = toNumber(m[1]!);
+      if (n && n > 1) counts.set(n, (counts.get(n) ?? 0) + 1);
+    }
+  }
+  const ratio = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  let effective: string | null = null;
+  for (const s of sentences) {
+    const at = s.search(/\beffective\b/i);
+    if (at === -1 || !REVERSE.test(s)) continue;
+    const date = s.slice(at).match(LONG_DATE);
+    if (date) {
+      effective = isoDate(date);
+      break;
+    }
+  }
+  if (ratio === null && effective === null) return null;
+  const after = sentences.map((s) => s.match(SHARES_AFTER)).find(Boolean);
+  return { ratio, effective, sharesAfter: after ? Number(after[1]!.replaceAll(',', '')) : null };
+}
+
+const DOLLARS = String.raw`\$\s?([\d,]+(?:\.\d+)?)\s*(million|billion)?`;
+const ATM = new RegExp(String.raw`aggregate offering price of up to\s+` + DOLLARS, 'i');
+const UP_TO = new RegExp(String.raw`\bup to\s+` + DOLLARS + String.raw`\s+of\s+(?:our\s+|its\s+)?(?:shares|common|ordinary|units|securities|american depositary)`, 'i');
+const GROSS = new RegExp(String.raw`gross proceeds[^.$]{0,100}?` + DOLLARS, 'i');
+const RESALE = /will not receive any (?:of the )?proceeds from the (?:sale|resale|offering)/i;
+/** Below this it's a par value or a fee, not an offering. */
+const MIN_OFFERING = 50_000;
+
+/** Offering size from the front of a 424B prospectus. */
+export function parseOfferingAmount(lines: string[]): { value: number | null; upTo: boolean; resale: boolean } | null {
+  const text = lines.join(' ').slice(0, 150_000);
+  const amount = (m: RegExpMatchArray | null) => {
+    if (!m) return null;
+    const v = Number(m[1]!.replaceAll(',', '')) * (m[2]?.toLowerCase() === 'billion' ? 1e9 : m[2] ? 1e6 : 1);
+    return v >= MIN_OFFERING ? v : null;
+  };
+  const atm = amount(text.match(ATM)) ?? amount(text.match(UP_TO));
+  if (atm !== null) return { value: atm, upTo: true, resale: false };
+  const gross = amount(text.match(GROSS));
+  if (gross !== null) return { value: gross, upTo: false, resale: false };
+  return RESALE.test(text) ? { value: null, upTo: false, resale: true } : null;
+}

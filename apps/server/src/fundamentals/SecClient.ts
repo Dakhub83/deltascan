@@ -1,7 +1,16 @@
 import type { DilutionReport, NewsItem } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
-import { buildDilutionReport, type CompanyFacts, type Submissions } from './dilution';
-import { countryFrom, coverListsAds, extractBusinessDescription, htmlToLines, incorporationFrom, parsePressRelease } from './filingText';
+import { buildDilutionReport, filingsToRead, type CompanyFacts, type FilingDetails, type Submissions } from './dilution';
+import {
+  countryFrom,
+  coverListsAds,
+  extractBusinessDescription,
+  htmlToLines,
+  incorporationFrom,
+  parseOfferingAmount,
+  parsePressRelease,
+  parseReverseSplit,
+} from './filingText';
 
 const TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 const TICKERS_TTL_MS = 24 * 3600_000;
@@ -14,6 +23,8 @@ const MIN_REQUEST_GAP_MS = 150;
 /** Annual reports run to 10+ MB; the Business section is well inside the first few. */
 const ANNUAL_REPORT_MAX_BYTES = 5_000_000;
 const PRESS_RELEASE_MAX_BYTES = 400_000;
+/** Split ratios sit in the 8-K body; offering sizes on the prospectus cover and summary. */
+const FILING_DETAIL_MAX_BYTES = 400_000;
 const PRESS_RELEASES = 4;
 const PRESS_RELEASE_DAYS = 60;
 /** 8-K items that usually carry a press release as exhibit 99.1. */
@@ -95,9 +106,28 @@ export class SecClient {
       }),
       this.submissionsFor(cik),
     ]);
-    const report = buildDilutionReport(symbol, cik, facts, subs);
+    const report = buildDilutionReport(symbol, cik, facts, subs, await this.filingDetails(symbol, cik, subs));
     this.log.info({ symbol, score: report.risk.score }, 'dilution report built');
     return report;
+  }
+
+  private async filingDetails(symbol: string, cik: string, subs: Submissions): Promise<FilingDetails> {
+    const details: FilingDetails = { splits: new Map(), amounts: new Map() };
+    for (const { url, read } of filingsToRead(subs, cik)) {
+      try {
+        const lines = htmlToLines(await this.getText(url, FILING_DETAIL_MAX_BYTES));
+        if (read === 'split') {
+          const split = parseReverseSplit(lines);
+          if (split) details.splits.set(url, split);
+        } else {
+          const amount = parseOfferingAmount(lines);
+          if (amount) details.amounts.set(url, amount);
+        }
+      } catch (err) {
+        this.log.warn({ symbol, url, err: (err as Error).message }, 'filing text fetch failed');
+      }
+    }
+    return details;
   }
 
   private async loadProfile(symbol: string): Promise<SecProfile | null> {

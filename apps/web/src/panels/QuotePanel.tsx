@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { marketData, type DilutionResult } from '../lib/marketData';
 import { fmtCompact, fmtPct, fmtPrice, signClass } from '../lib/format';
 import { addDilutionWindow } from '../lib/layout';
+import { complianceLevel } from '../lib/dilutionView';
 import { CompanyDescription, NewsList, useCompanyProfile } from '../components/CompanyInfo';
 import { useUiStore } from '../store/uiStore';
 
@@ -30,6 +31,7 @@ const RATINGS: { key: keyof DilutionReport['ratings'] | 'overall'; label: string
   { key: 'frequency', label: 'Frequency' },
   { key: 'cashNeed', label: 'Cash Need' },
   { key: 'warrants', label: 'Warrants' },
+  { key: 'compliance', label: 'Compliance' },
 ];
 
 const usd = (n: number) => `${n < 0 ? '-' : ''}$${fmtCompact(Math.abs(n))}`;
@@ -131,7 +133,7 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
     const months = estCash / report.monthlyBurn;
     cashLeft = <span className={months < 6 ? 'text-down' : undefined}>{months.toFixed(1)} months</span>;
   }
-  const splits = report?.filings.filter((f) => f.kind === 'reverse-split') ?? [];
+  const splits = report?.reverseSplits ?? [];
 
   let ratingsNote: string | null = null;
   if (sec === 'loading') ratingsNote = 'Loading SEC filings…';
@@ -201,7 +203,7 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
             report && (
               <div className="grid grid-cols-3 gap-x-2 gap-y-2">
                 {RATINGS.map((r) => {
-                  const value = r.key === 'overall' ? report.risk.level : report.ratings[r.key];
+                  const value = r.key === 'overall' ? report.risk.level : r.key === 'compliance' ? complianceLevel(report, price) : report.ratings[r.key];
                   return (
                     <div key={r.key}>
                       <div className="text-[11px] text-muted">{r.label}</div>
@@ -239,16 +241,24 @@ export function QuotePanel({ params, api: panelApi }: IDockviewPanelProps<QuoteP
         </Section>
 
         <Section title="Recent Splits">
-          {report?.reverseSplitSuspected || splits.length ? (
+          {splits.length ? (
             <ul className="flex flex-col gap-0.5 text-[12px] text-dim">
-              {report?.reverseSplitSuspected && <li>Share count dropped sharply around {shortDate(report.reverseSplitSuspected)} (likely a reverse split)</li>}
-              {splits.map((f) => (
-                <li key={f.url}>
-                  <a href={f.url} target="_blank" rel="noreferrer" className="hover:text-accent">
-                    {shortDate(f.filed)}: charter amendment (often a reverse split)
-                  </a>
-                </li>
-              ))}
+              {splits.map((s) => {
+                const text = `${shortDate(s.date)}: ${s.ratio ? `${s.source === 'share-count' ? '≈ ' : ''}1-for-${s.ratio} reverse split` : 'reverse split'}${
+                  s.source === 'share-count' ? ' (estimated from share counts)' : ''
+                }`;
+                return (
+                  <li key={s.date}>
+                    {s.url ? (
+                      <a href={s.url} target="_blank" rel="noreferrer" className="hover:text-accent">
+                        {text}
+                      </a>
+                    ) : (
+                      text
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="text-[12px] text-muted">{report ? 'No recent splits found.' : 'Needs SEC data.'}</p>

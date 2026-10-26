@@ -3,6 +3,7 @@ import type { CompanyProfile, NewsItem } from '@deltascan/shared';
 import { ExternalLink } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData, type ProfileResult } from '../lib/marketData';
+import { isChinaBased } from '../lib/dilutionView';
 
 const etNewsTime = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
@@ -29,12 +30,16 @@ export function useCompanyProfile(symbol: string | null): ProfileResult | 'loadi
 
 const YesNo = ({ yes }: { yes: boolean }) => <span className={yes ? 'text-warn' : 'text-up'}>{yes ? 'Yes' : 'No'}</span>;
 
-/** "Country: United States • ADR: No • Inc. Nevada" */
+/** "Country: United States • China: No • ADR: No • Inc. Nevada" */
 export function CompanyFacts({ profile, className }: { profile: CompanyProfile | null; className?: string }) {
+  const china = isChinaBased(profile?.country);
   return (
     <div className={clsx('flex flex-wrap gap-x-3 gap-y-0.5', className)}>
       <span>
         Country: <span className="text-fg">{profile?.country ?? 'N/A'}</span>
+      </span>
+      <span title="China-based by business address (Hong Kong and Macau included)">
+        China: {china === null ? <span className="text-muted">N/A</span> : <YesNo yes={china} />}
       </span>
       <span title="From the annual report cover: ADRs list American Depositary Shares">
         ADR: {profile?.adr == null ? <span className="text-muted">N/A</span> : <YesNo yes={profile.adr} />}

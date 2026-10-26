@@ -283,6 +283,27 @@ export interface DilutionFiling {
   /** Plain-English description, e.g. "Unregistered sale of equity". */
   label: string;
   url: string;
+  /** Offering size read from the prospectus text; null when it isn't stated or couldn't be read. */
+  amount?: OfferingAmount | null;
+}
+
+export interface OfferingAmount {
+  /** Dollars; null for resale prospectuses (the company receives nothing). */
+  value: number | null;
+  /** ATMs and shelf takedowns state a maximum ("up to $10M"), not a raise. */
+  upTo: boolean;
+  resale: boolean;
+}
+
+export interface ReverseSplit {
+  /** Effective date from the filing, else its filing date, else the period of the share-count drop. */
+  date: string;
+  /** Old shares per new share: 5 for a 1-for-5. Estimated when `source` is 'share-count'. */
+  ratio: number | null;
+  source: 'filing' | 'share-count';
+  /** Shares outstanding right after the split, when the filing states it. */
+  sharesAfter: number | null;
+  url: string | null;
 }
 
 export type RiskLevel = 'low' | 'medium' | 'high';
@@ -300,11 +321,15 @@ export interface DilutionReport {
   industry: string | null;
   location: string | null;
   sharesOutstanding: ReportedValue | null;
-  /** Cover-page share counts, oldest first, for the trend. */
-  shareHistory: { asOf: string; value: number }[];
-  /** Growth from `shareGrowthSince` to the latest count. Measured from the last drop, since splits aren't adjusted. */
+  /** Cover-page share counts, oldest first. `adjusted` restates earlier counts for later reverse splits with a known ratio. */
+  shareHistory: { asOf: string; value: number; adjusted: number }[];
+  /** Growth from `shareGrowthSince` to the latest count, on split-adjusted counts; resets at drops it can't explain. */
   shareGrowthPct: number | null;
   shareGrowthSince: string | null;
+  /** True when the growth figure spans a reverse split that was adjusted for. */
+  shareGrowthSplitAdjusted: boolean;
+  /** Reverse splits in the last two years, newest first. */
+  reverseSplits: ReverseSplit[];
   /** Date of a share-count drop of more than 40% (likely a reverse split), if any in the history. */
   reverseSplitSuspected: string | null;
   cash: ReportedValue | null;
@@ -324,7 +349,7 @@ export interface DilutionReport {
   equitySalesSinceBalanceSheet: number;
   risk: { score: number; level: RiskLevel; reasons: RiskReason[] };
   /** Per-area ratings for the quote card; null when the SEC data can't judge that area. */
-  ratings: Record<'offering' | 'dilution' | 'frequency' | 'cashNeed' | 'warrants', RiskLevel | null>;
+  ratings: Record<'offering' | 'dilution' | 'frequency' | 'cashNeed' | 'warrants' | 'compliance', RiskLevel | null>;
   /** Files 20-F / 40-F / 6-K: a foreign private issuer (most ADRs are). */
   foreignFiler: boolean;
   fetchedAt: EpochMs;

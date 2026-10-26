@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { IDockviewPanelProps } from 'dockview';
-import type { DilutionFilingKind, DilutionReport, ReportedValue, SymbolSnapshot } from '@deltascan/shared';
+import type { DilutionFilingKind, DilutionReport, ReportedValue, ReverseSplit, SymbolSnapshot } from '@deltascan/shared';
 import { ExternalLink, Link2, Link2Off, ShieldAlert } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData, type DilutionResult, type ProfileResult } from '../lib/marketData';
 import { CompanyDescription, CompanyFacts, NewsList, useCompanyProfile } from '../components/CompanyInfo';
+import { RiskRatings } from '../components/RiskRatings';
 import { TapeStrip } from '../components/TapeStrip';
+import { capLabel, cashPosition, floatLabel, fmtOffering, type Tone } from '../lib/dilutionView';
 import { fmtCompact, fmtPct, fmtPrice, signClass } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
@@ -16,6 +18,8 @@ export interface DilutionPanelParams {
 }
 
 const FILINGS_SHOWN = 8;
+const SHARE_COUNTS_SHOWN = 6;
+const TONE: Record<Tone, string> = { up: 'text-up', down: 'text-down', warn: 'text-warn', dim: 'text-dim' };
 const MONTH_MS = 30.44 * 86_400_000;
 
 const LEVEL = {
@@ -66,6 +70,45 @@ function Stat({ label, value, unit, note, tone }: { label: string; value: ReactN
   );
 }
 
+type TimelineRow = { kind: 'count'; asOf: string; value: number; adjusted: number; changePct: number | null } | { kind: 'split'; split: ReverseSplit };
+
+/** Recent share counts, oldest first, with reverse splits slotted in by date. */
+function shareTimeline(report: DilutionReport): TimelineRow[] {
+  const counts = report.shareHistory.slice(-SHARE_COUNTS_SHOWN);
+  const first = counts[0]?.asOf ?? '';
+  const rows: TimelineRow[] = counts.map((c, i) => ({
+    kind: 'count',
+    ...c,
+    changePct: i > 0 ? (c.adjusted / counts[i - 1]!.adjusted - 1) * 100 : null,
+  }));
+  for (const split of report.reverseSplits) {
+    if (split.date < first) continue;
+    const at = rows.findIndex((r) => r.kind === 'count' && r.asOf >= split.date);
+    rows.splice(at === -1 ? rows.length : at, 0, { kind: 'split', split });
+  }
+  return rows;
+}
+
+function SplitRow({ split }: { split: ReverseSplit }) {
+  const title = split.ratio ? `${split.source === 'share-count' ? '≈ ' : ''}1-for-${split.ratio} reverse split` : 'Reverse split';
+  return (
+    <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-y border-violet/20 bg-violet/5 px-4 py-1.5 text-[11px]">
+      <span className="num w-24 shrink-0 text-muted">{shortDate(split.date)}</span>
+      <span className="font-semibold text-violet">{title}</span>
+      {split.sharesAfter !== null && <span className="num text-dim">≈ {split.sharesAfter.toLocaleString()} shares after</span>}
+      {split.url ? (
+        <a href={split.url} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-muted hover:text-accent">
+          8-K
+        </a>
+      ) : (
+        <span className="ml-auto text-[10px] text-muted" title="No 8-K found; the ratio is estimated from the drop in share count">
+          from share counts
+        </span>
+      )}
+    </li>
+  );
+}
+
 function Report({
   report,
   row,
@@ -85,6 +128,9 @@ function Report({
   const marketCap = price !== null && shares !== null ? price * shares : null;
   const monthsSinceCash = report.cash ? (Date.now() - Date.parse(`${report.cash.asOf}T00:00:00Z`)) / MONTH_MS : 0;
   const filings = showAll ? report.filings : report.filings.slice(0, FILINGS_SHOWN);
+  const cashPos = cashPosition(report);
+  const floatTag = floatLabel(row?.floatShares);
+  const timeline = shareTimeline(report);
 
   let runway: ReactNode = '—';
   let runwayNote: ReactNode = 'No recent cash-flow figures';
@@ -93,8 +139,8 @@ function Report({
     runway = 'Positive';
     runwayNote = 'Operating cash flow is positive';
   } else if (report.runwayMonths !== null) {
-    runway = report.runwayMonths.toFixed(1);
-    runwayNote = `at ${shortDate(report.cash!.asOf)} · ${monthsSinceCash.toFixed(1)} months have passed`;
+    runway = Math.max(0, report.runwayMonths - monthsSinceCash).toFixed(1);
+    runwayNote = `left today · ${report.runwayMonths.toFixed(1)} at the ${shortDate(report.cash!.asOf)} balance sheet`;
   }
 
   return (
@@ -132,6 +178,7 @@ function Report({
           </div>
           <div className={clsx('num text-[14px] font-semibold', level.text)}>{report.risk.score} / 10</div>
         </div>
+        <RiskRatings report={report} price={price} className="mt-3 border-t border-line/60 pt-2.5" />
         {report.risk.reasons.length > 0 ? (
           <ul className="mt-2.5 flex flex-col gap-1">
             {report.risk.reasons.map((r) => (
@@ -146,6 +193,38 @@ function Report({
         )}
       </section>
 
+      {(cashPos || report.financial) && (
+        <section className="rounded-xl border border-line bg-raised/40 px-4 py-3">
+          <div className="mb-1 text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Cash position</div>
+          <p className="text-[12px] leading-relaxed text-dim">
+            {!cashPos ? (
+              'Not meaningful for banks and lenders: their operating cash flow includes loans made.'
+            ) : cashPos.positive ? (
+              <>
+                Operating cash flow is <span className="font-semibold text-up">positive</span>, so the company isn't burning cash
+                {cashPos.estCash !== null && <> (last reported cash {usd(cashPos.estCash)})</>}.
+              </>
+            ) : (
+              <>
+                The company has about{' '}
+                <span className={clsx('num font-semibold', cashPos.monthsLeft < 6 ? 'text-down' : cashPos.monthsLeft < 12 ? 'text-warn' : 'text-up')}>
+                  {cashPos.monthsLeft.toFixed(1)} months
+                </span>{' '}
+                of cash left, based on a quarterly cash burn of <span className="num font-semibold text-fg">{usd(cashPos.quarterlyBurn)}</span> and
+                estimated current cash of <span className="num font-semibold text-fg">{usd(cashPos.estCash)}</span>.
+                {report.equitySalesSinceBalanceSheet > 0 && (
+                  <>
+                    {' '}
+                    {report.equitySalesSinceBalanceSheet} equity sale{report.equitySalesSinceBalanceSheet > 1 ? 's' : ''} since the{' '}
+                    {shortDate(report.cash!.asOf)} balance sheet {report.equitySalesSinceBalanceSheet > 1 ? "aren't" : "isn't"} included.
+                  </>
+                )}
+              </>
+            )}
+          </p>
+        </section>
+      )}
+
       <section>
         <div className="mb-1.5 text-[10px] font-semibold tracking-[0.14em] text-accent uppercase">At a glance</div>
         <div className="grid grid-cols-1 gap-2 @[420px]:grid-cols-2 @[640px]:grid-cols-3">
@@ -153,12 +232,21 @@ function Report({
             label="Market cap"
             value={marketCap !== null ? usd(marketCap) : '—'}
             note={
-              price === null
-                ? 'Not in the live stream, so no price'
-                : simulated
-                  ? 'Uses the simulated price; not the real market cap'
-                  : 'Live price × shares outstanding'
+              price === null ? (
+                'Not in the live stream, so no price'
+              ) : (
+                <>
+                  <span className="font-semibold text-dim">{capLabel(marketCap)}</span> ·{' '}
+                  {simulated ? 'uses the simulated price, not the real market cap' : 'live price × shares outstanding'}
+                </>
+              )
             }
+          />
+          <Stat
+            label="Float"
+            value={row?.floatShares != null ? fmtCompact(row.floatShares) : '—'}
+            tone={floatTag?.tone === 'down' ? 'text-down' : undefined}
+            note={floatTag ? <span className={clsx('font-semibold', TONE[floatTag.tone])}>{floatTag.text}</span> : 'Not in the live stream'}
           />
           <Stat label="Shares outstanding" value={shares !== null ? fmtCompact(shares) : '—'} note={asOf(report.sharesOutstanding)} />
           <Stat
@@ -167,7 +255,9 @@ function Report({
             tone={report.shareGrowthPct !== null && report.shareGrowthPct > 20 ? 'text-down' : undefined}
             note={
               report.shareGrowthSince
-                ? `since ${shortDate(report.shareGrowthSince)}${report.reverseSplitSuspected ? ' (after a likely reverse split)' : ''}`
+                ? `since ${shortDate(report.shareGrowthSince)}${
+                    report.shareGrowthSplitAdjusted ? ', split-adjusted' : report.reverseSplitSuspected ? ' (after a likely reverse split)' : ''
+                  }`
                 : 'Not enough history'
             }
           />
@@ -206,6 +296,42 @@ function Report({
         </div>
       </section>
 
+      {timeline.length > 0 && (
+        <section className="rounded-xl border border-line bg-raised/40">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line px-4 py-2.5">
+            <span className="text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Shares outstanding &amp; splits</span>
+            {report.shareGrowthPct !== null && report.shareGrowthSince && (
+              <span className="text-[11px] text-dim">
+                <span className={clsx('num font-semibold', report.shareGrowthPct > 20 ? 'text-down' : 'text-fg')}>{fmtPct(report.shareGrowthPct, 0)}</span>{' '}
+                since {shortDate(report.shareGrowthSince)}
+                {report.shareGrowthSplitAdjusted && ', adjusted for the split'}
+              </span>
+            )}
+          </div>
+          <ul className="py-1">
+            {timeline.map((r) =>
+              r.kind === 'split' ? (
+                <SplitRow key={`split-${r.split.date}`} split={r.split} />
+              ) : (
+                <li key={r.asOf} className="flex items-baseline gap-2 px-4 py-1 text-[11px]">
+                  <span className="num w-24 shrink-0 text-muted">{shortDate(r.asOf)}</span>
+                  <span className="num font-semibold text-fg">{r.value.toLocaleString()}</span>
+                  {Math.round(r.adjusted) !== r.value && (
+                    <span className="num text-muted" title="Restated for the later reverse split">
+                      ({Math.round(r.adjusted).toLocaleString()} split-adj.)
+                    </span>
+                  )}
+                  {r.changePct !== null && Math.abs(r.changePct) >= 0.5 && (
+                    <span className={clsx('num ml-auto', r.changePct > 0 ? 'text-down' : 'text-up')}>{fmtPct(r.changePct, 0)}</span>
+                  )}
+                </li>
+              ),
+            )}
+          </ul>
+          {report.reverseSplits.length === 0 && <p className="border-t border-line/60 px-4 py-1.5 text-[10px] text-muted">No reverse splits in the last two years.</p>}
+        </section>
+      )}
+
       <section className="rounded-xl border border-line bg-raised/40 px-4 py-2.5">
         <div className="mb-1 text-[11px] font-semibold tracking-[0.12em] text-fg uppercase">Latest news</div>
         <NewsList result={profile} />
@@ -226,6 +352,9 @@ function Report({
                 <span className="num w-20 shrink-0 text-[11px] text-muted">{shortDate(f.filed)}</span>
                 <span className={clsx('w-16 shrink-0 rounded px-1.5 py-px text-center text-[10px] font-semibold ring-1 ring-inset', KIND_STYLE[f.kind])}>{f.form}</span>
                 <span className="min-w-0 flex-1 truncate text-[11px] text-dim group-hover:text-fg">{f.label}</span>
+                {f.amount && fmtOffering(f.amount) && (
+                  <span className={clsx('num shrink-0 text-[11px] font-semibold', f.amount.resale ? 'text-muted' : 'text-down')}>{fmtOffering(f.amount)}</span>
+                )}
                 <ExternalLink className="size-3 shrink-0 text-muted opacity-0 group-hover:opacity-100" />
               </a>
             </li>
@@ -240,8 +369,9 @@ function Report({
 
       <footer className="rounded-lg border border-warn/20 bg-warn/5 px-3 py-2 text-[10px] leading-relaxed text-muted">
         <span className="font-semibold text-dim">Educational information only, not investment advice.</span> Figures come from SEC EDGAR XBRL
-        data and the filing index, fetched {new Date(report.fetchedAt).toLocaleTimeString()}. They lag the latest filings, aren't adjusted for
-        splits, and the risk score is DeltaScan's own heuristic. Check the filings themselves before acting.
+        data, the filing index and filing text, fetched {new Date(report.fetchedAt).toLocaleTimeString()}. They lag the latest filings, share
+        counts are adjusted only for reverse splits announced in 8-Ks, offering sizes are read from prospectus text, and the ratings are
+        DeltaScan's own heuristics. Check the filings themselves before acting.
       </footer>
     </div>
   );

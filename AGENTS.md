@@ -63,6 +63,8 @@ npm run typecheck    # all workspaces
 - **Dilution window**: `panels/DilutionPanel.tsx`.
   - Server: `fundamentals/SecClient.ts` fetches SEC EDGAR (rate-limited, 6 h cache, needs `SEC_USER_AGENT`). `fundamentals/dilution.ts` is a pure builder (tests in `test/dilution.test.ts`). The endpoint is `GET /api/dilution?symbol=`; it returns 503 when not configured and 404 for unknown tickers, including the mock's made-up ones.
   - Score heuristics: runway is skipped for SIC 6000–6799 (financials). Prospectus and shelf filings don't count for issuers with an S-3ASR (well-known seasoned issuers, usually debt deals). Share growth is measured from the last >40 % drop, because XBRL isn't split-adjusted.
+  - Filing text: `filingsToRead` (dilution.ts) picks 8-Ks with item 5.03/3.03 and 424B prospectuses; `SecClient.filingDetails` fetches them and `parseReverseSplit` / `parseOfferingAmount` (filingText.ts) read the split ratio, effective date, shares after, and offering size. Counts before an 8-K-announced split are divided by its ratio (`shareHistory[].adjusted`) only when the counts show the drop; ratios estimated from share counts are shown but never used to adjust. The `compliance` rating comes from 8-K 3.01 notices, late filings and recent splits; the web side raises it to medium under $1 (`lib/dilutionView.ts`).
+  - The tracker shows the ratings grid (`components/RiskRatings.tsx`), a cash-position sentence, float/market-cap labels, China yes/no, a share-count timeline with splits, and offering amounts on the filings. Insider ownership isn't built: it isn't in SEC's structured data.
   - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
 
 - **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
@@ -92,7 +94,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (17/17), typecheck clean.**
+Status: **tests pass (51 server, 17 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).
