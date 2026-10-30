@@ -26,13 +26,13 @@ const REJECT: [number, number, number, number] = [2.65, 2.72, 2.55, 2.58]; // wi
 const CONFIRM: [number, number, number, number] = [2.58, 2.6, 2.45, 2.5]; // closes below 2.55
 
 describe('FadeDetector', () => {
-  it('walks Spike → Extension → Rejection → Confirmation and alerts on the confirmation', () => {
+  it('walks Spike → Extension → Rejection → Confirmation, alerting topping then the confirmation', () => {
     expect(run([SPIKE]).state?.stage).toBe('spike');
     expect(run([SPIKE, EXTEND]).state?.stage).toBe('extension');
     expect(run([SPIKE, EXTEND, REJECT]).state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.72 });
     const confirmed = run([SPIKE, EXTEND, REJECT, CONFIRM]);
     expect(confirmed.state).toMatchObject({ stage: 'confirmation', confirmLevel: 2.55, high: 2.72 });
-    expect(confirmed.alerts).toEqual(['rejection_confirmed']);
+    expect(confirmed.alerts).toEqual(['topping', 'rejection_confirmed']);
   });
 
   it('does not confirm while the rejection bar is still forming', () => {
@@ -42,7 +42,52 @@ describe('FadeDetector', () => {
     const b = bars([SPIKE, EXTEND, REJECT]);
     b[b.length - 1] = { ...b.at(-1)!, open: 2.58, high: 2.6, low: 2.45, close: 2.5 };
     expect(d.evaluate(snap(), b, NOW)?.stage).toBe('rejection');
-    expect(alerts).toEqual([]);
+    expect(alerts).toEqual(['topping']);
+  });
+
+  it('alerts topping on a topping tail with the risk and confirmation levels', () => {
+    const details: string[] = [];
+    const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+    const state = d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT]), NOW);
+    expect(state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.72, rejectionLow: 2.55, confirmLevel: null });
+    expect(details).toEqual(['topping: Topping tail at 2.72 (41% wick) · starter: risk over 2.72, confirms under 2.55']);
+  });
+
+  it('alerts topping when it stalls under the high and a red bar breaks the prior low', () => {
+    const details: string[] = [];
+    const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+    const hold: [number, number, number, number] = [2.65, 2.68, 2.6, 2.66];
+    const failing: [number, number, number, number] = [2.66, 2.66, 2.56, 2.57]; // red, under the prior low 2.60
+    d.evaluate(snap(), bars([SPIKE, EXTEND, hold, hold, failing]), NOW);
+    expect(details).toEqual(['topping: Failed at 2.70 for 3m, red bar broke 2.60 · starter: risk over 2.70, confirms under 2.56']);
+  });
+
+  describe('failed bounce', () => {
+    const DROP: [number, number, number, number] = [2.5, 2.52, 2.4, 2.42]; // the leg down: low 2.40
+    const BOUNCE: [number, number, number, number] = [2.42, 2.52, 2.46, 2.5]; // retraces 0.12 of the 0.32 drop from 2.72
+    const ROLL: [number, number, number, number] = [2.5, 2.51, 2.43, 2.44]; // red, closes under the bounce bar's low
+
+    it('alerts when a backside bounce makes a lower high and rolls over', () => {
+      const details: string[] = [];
+      const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+      const state = d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT, CONFIRM, DROP, BOUNCE, ROLL]), NOW);
+      expect(state).toMatchObject({ stage: 'fade', lowerHigh: 2.52 });
+      expect(details.at(-1)).toBe('failed_bounce: Lower high 2.52 under 2.72, bounce off 2.40 failed · add: risk over 2.52');
+    });
+
+    it('ignores a bounce too small to be one, and one that rolls over too late', () => {
+      const tiny: [number, number, number, number] = [2.42, 2.45, 2.42, 2.44];
+      const tinyRoll: [number, number, number, number] = [2.44, 2.44, 2.41, 2.41];
+      expect(run([SPIKE, EXTEND, REJECT, CONFIRM, DROP, tiny, tinyRoll]).alerts).not.toContain('failed_bounce');
+      const hold: [number, number, number, number] = [2.5, 2.51, 2.47, 2.49];
+      const late = run([SPIKE, EXTEND, REJECT, CONFIRM, DROP, BOUNCE, hold, hold, hold, hold, ROLL]);
+      expect(late.alerts).not.toContain('failed_bounce');
+    });
+
+    it('a new high clears the lower high', () => {
+      const r = run([SPIKE, EXTEND, REJECT, CONFIRM, DROP, BOUNCE, ROLL, [2.44, 2.8, 2.44, 2.78]]);
+      expect(r.state).toMatchObject({ stage: 'extension', lowerHigh: null });
+    });
   });
 
   it("doesn't alert a confirmation that comes too far off the high (the back side)", () => {
@@ -62,7 +107,7 @@ describe('FadeDetector', () => {
     const bounce: [number, number, number, number] = [2.22, 2.29, 2.2, 2.26]; // high within 1.5% of 2.30, closes under
     const r = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, bounce]);
     expect(r.state?.stage).toBe('vwap-bounce');
-    expect(r.alerts).toEqual(['rejection_confirmed', 'vwap_bounce']);
+    expect(r.alerts).toEqual(['topping', 'rejection_confirmed', 'vwap_bounce']);
   });
 
   it('ignores names outside the price and float floors', () => {

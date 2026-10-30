@@ -2,6 +2,7 @@ import type { AlertType } from '@deltascan/shared';
 import {
   ArrowDownToLine,
   ArrowUpToLine,
+  ArrowDownRight,
   Blocks,
   ChevronsDown,
   ChevronsUp,
@@ -9,6 +10,7 @@ import {
   Pause,
   Play,
   TrendingDown,
+  TriangleAlert,
   Undo2,
   type LucideIcon,
 } from 'lucide-react';
@@ -82,6 +84,14 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     badge: 'bg-warn/12 text-warn ring-warn/25',
     tone: [392, 392, 392],
   },
+  topping: {
+    label: 'Topping (starter)',
+    short: 'TOPPING',
+    icon: TriangleAlert,
+    text: 'text-warn',
+    badge: 'bg-warn/12 text-warn ring-warn/25',
+    tone: [880, 660],
+  },
   rejection_confirmed: {
     label: 'Rejection Confirmed',
     short: 'REJECT ✓',
@@ -89,6 +99,14 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     text: 'text-down',
     badge: 'bg-down/12 text-down ring-down/25',
     tone: [988, 740, 523],
+  },
+  failed_bounce: {
+    label: 'Failed Bounce (lower high)',
+    short: 'FAIL BNC',
+    icon: ArrowDownRight,
+    text: 'text-down',
+    badge: 'bg-down/12 text-down ring-down/25',
+    tone: [784, 587, 440],
   },
   vwap_bounce: {
     label: 'Backside VWAP Bounce',

@@ -22,6 +22,14 @@ export interface FadeOptions {
   fadeOffHighPct?: number;
   /** A backside bounce reaches within this fraction of VWAP from below. */
   vwapTouch?: number;
+  /** A backside bounce must retrace at least this fraction of the drop from the risk level to the low… */
+  bounceRetrace?: number;
+  /** …and at least this percent off the low, so a one-tick wiggle isn't a bounce. */
+  bounceMinPct?: number;
+  /** A failed bounce must roll over within this many bars of its high. */
+  bounceRollBars?: number;
+  /** Past this far off the high, a failed bounce is chasing the back side and doesn't alert. */
+  maxBounceOffHighPct?: number;
   /**
    * Only names inside these floors are tracked, so alerts match what the Fade Setups scanner
    * shows (keep in sync with FADE in apps/web/src/scanners/fade.ts). Unknown float passes.
@@ -45,6 +53,10 @@ interface SymbolState {
   barsSinceHigh: number;
   rejection: { high: number; low: number } | null;
   confirmLevel: number | null;
+  /** Backside tracking: the low of the current leg down, and the high of the bounce off it. */
+  swingLow: number | null;
+  bounce: { high: number; bars: number } | null;
+  lowerHigh: number | null;
   prev: Bar | null;
 }
 
@@ -58,6 +70,9 @@ const fresh = (): SymbolState => ({
   barsSinceHigh: 0,
   rejection: null,
   confirmLevel: null,
+  swingLow: null,
+  bounce: null,
+  lowerHigh: null,
   prev: null,
 });
 
@@ -65,8 +80,10 @@ const fmt = (n: number) => n.toFixed(n < 1 ? 4 : 2);
 
 /**
  * Tracks each runner through Spike → Extension → Rejection → Confirmation → Fade on completed
- * 1-minute bars (the bar in progress is ignored, so nothing confirms intrabar). Fires
- * `rejection_confirmed` and `vwap_bounce` alerts. VWAP is the snapshot's current session VWAP.
+ * 1-minute bars (the bar in progress is ignored, so nothing confirms intrabar). Fires `topping`
+ * (the starter-size signal), `rejection_confirmed`, `failed_bounce` (a lower high rolling over:
+ * the add) and `vwap_bounce` alerts. VWAP is the
+ * snapshot's current session VWAP.
  */
 export class FadeDetector {
   private readonly o: Required<Omit<FadeOptions, 'alertMaxAgeMs'>> & { alertMaxAgeMs: number };
@@ -86,6 +103,10 @@ export class FadeDetector {
       maxConfirmOffHighPct: 15,
       fadeOffHighPct: 8,
       vwapTouch: 0.015,
+      bounceRetrace: 0.25,
+      bounceMinPct: 2,
+      bounceRollBars: 3,
+      maxBounceOffHighPct: 35,
       minPrice: 1,
       minFloat: 2e6,
       maxFloat: 30e6,
@@ -112,7 +133,16 @@ export class FadeDetector {
       this.states.set(snap.symbol, st);
     }
     return st.stage
-      ? { stage: st.stage, since: st.since, high: st.high, highAt: st.highAt, rejectionHigh: st.rejection?.high ?? null, confirmLevel: st.confirmLevel }
+      ? {
+          stage: st.stage,
+          since: st.since,
+          high: st.high,
+          highAt: st.highAt,
+          rejectionHigh: st.rejection?.high ?? null,
+          rejectionLow: st.rejection?.low ?? null,
+          confirmLevel: st.confirmLevel,
+          lowerHigh: st.lowerHigh,
+        }
       : null;
   }
 
@@ -120,6 +150,32 @@ export class FadeDetector {
     if (s.last !== null && s.last < this.o.minPrice) return false;
     if (s.floatShares !== null && (s.floatShares < this.o.minFloat || s.floatShares > this.o.maxFloat)) return false;
     return true;
+  }
+
+  /** A bounce off the backside low that makes a lower high, then a red bar breaking the prior low. */
+  private trackBounce(st: SymbolState, b: Bar, offHigh: number, alert: (type: AlertType, detail: string) => void) {
+    const o = this.o;
+    const ceiling = st.rejection?.high ?? st.high;
+    if (st.swingLow === null || b.low < st.swingLow) {
+      st.swingLow = b.low;
+      st.bounce = null;
+      return;
+    }
+    if (b.high >= ceiling) return; // not a lower high; the stage logic handles the reclaim
+    if (!st.bounce || b.high > st.bounce.high) st.bounce = { high: b.high, bars: 0 };
+    else st.bounce.bars++;
+
+    const { high } = st.bounce;
+    const low = st.swingLow;
+    const big = high - low >= o.bounceRetrace * (ceiling - low) && (high / low - 1) * 100 >= o.bounceMinPct;
+    const rolled = st.bounce.bars <= o.bounceRollBars && b.close < b.open && st.prev !== null && b.close < st.prev.low;
+    if (!big || !rolled) return;
+    st.lowerHigh = high;
+    st.swingLow = b.low;
+    st.bounce = null;
+    if (offHigh <= o.maxBounceOffHighPct) {
+      alert('failed_bounce', `Lower high ${fmt(high)} under ${fmt(ceiling)}, bounce off ${fmt(low)} failed · add: risk over ${fmt(high)}`);
+    }
   }
 
   private step(st: SymbolState, b: Bar, snap: Readonly<SymbolSnapshot>, live: boolean): SymbolState {
@@ -142,8 +198,15 @@ export class FadeDetector {
     const enter = (stage: FadeStage) => {
       st.stage = stage;
       st.since = b.timestamp + 60_000;
+      if (stage === 'spike' || stage === 'extension') {
+        st.swingLow = null;
+        st.bounce = null;
+        st.lowerHigh = null;
+      }
     };
     const alert = (type: AlertType, detail: string) => live && this.onAlert(type, snap.symbol, b.close, detail);
+
+    if (st.stage === 'confirmation' || st.stage === 'fade' || st.stage === 'vwap-bounce') this.trackBounce(st, b, offHigh, alert);
 
     switch (st.stage) {
       case null:
@@ -167,6 +230,11 @@ export class FadeDetector {
         if (toppingTail || stalled) {
           st.rejection = toppingTail ? { high: b.high, low: b.low } : { high: st.high, low: b.low };
           enter('rejection');
+          const r = st.rejection;
+          const why = toppingTail
+            ? `Topping tail at ${fmt(r.high)} (${Math.round((wick / range) * 100)}% wick)`
+            : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
+          alert('topping', `${why} · starter: risk over ${fmt(r.high)}, confirms under ${fmt(r.low)}`);
         } else if (offHigh >= o.maxConfirmOffHighPct) {
           enter('fade'); // topped without a clean rejection; too late to call one now
         }

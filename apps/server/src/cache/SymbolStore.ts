@@ -137,6 +137,8 @@ export class SymbolStore {
         a.since === fade.since &&
         a.high === fade.high &&
         a.rejectionHigh === fade.rejectionHigh &&
+        a.rejectionLow === fade.rejectionLow &&
+        a.lowerHigh === fade.lowerHigh &&
         a.confirmLevel === fade.confirmLevel);
     if (same) return;
     s.fade = fade;

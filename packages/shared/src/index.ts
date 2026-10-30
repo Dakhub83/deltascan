@@ -141,8 +141,12 @@ export interface FadeState {
   highAt: EpochMs;
   /** High of the rejection candle: a new high above it invalidates the setup. */
   rejectionHigh: number | null;
+  /** The rejection candle's low: a close below it confirms the rejection. */
+  rejectionLow: number | null;
   /** The rejection candle's low; a close below it confirmed the rejection. */
   confirmLevel: number | null;
+  /** High of the last failed backside bounce: the risk for an add. */
+  lowerHigh: number | null;
 }
 
 // ── Trading halts ──
@@ -209,7 +213,9 @@ export const ALERT_TYPES = [
   'block_trade',
   'halt',
   'resume',
+  'topping',
   'rejection_confirmed',
+  'failed_bounce',
   'vwap_bounce',
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];

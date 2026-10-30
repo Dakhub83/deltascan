@@ -70,7 +70,8 @@ npm run typecheck    # all workspaces
   - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
 
 - **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
-  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `rejection_confirmed` and `vwap_bounce` alerts, and replays backfill silently.
+  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, or a stall under it with a red bar breaking the prior low), `rejection_confirmed`, `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently.
+  - The chart draws the setup from `fade` (`lib/fadeSignals.ts`): HOD, RISK (rejection high), CONFIRMS < (rejection low) and LH · ADD RISK price lines, TOP / CONF / LH / VWAP markers from the alert feed, and a stage badge whose tooltip says what to do.
   - Detector floors (price, float) duplicate `FADE` in `apps/web/src/scanners/fade.ts`; keep them in sync.
   - Scanners are `fade-setups` and `backside-vwap`; columns are `fadeStage`, `offHighPct` and `sinceHighMin`.
   - `panels/ShortCalcPanel.tsx` + `lib/shortPlan.ts` (tests in `shortPlan.test.ts`; the web workspace now runs vitest too). Limits live in `settings.shortLimits`; the persist `merge` layers saved settings over the defaults.
@@ -100,7 +101,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (53 server, 21 web), typecheck clean.**
+Status: **tests pass (58 server, 27 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).

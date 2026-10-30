@@ -9,20 +9,26 @@ import {
   LineStyle,
   TickMarkType,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
+  type IPriceLine,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
   type ISeriesApi,
   type MouseEventParams,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { Bar } from '@deltascan/shared';
+import type { AlertType, Bar, FadeState } from '@deltascan/shared';
 import { ChartCandlestick, Link2, Link2Off } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
 import { TIMEFRAMES, aggregate, ema, sessionVwap, timeframeLabel, upsertBar, type Timeframe } from '../lib/chartData';
+import { fadeLevels, signalMarks, type LevelKind } from '../lib/fadeSignals';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
+import { STAGE_META } from '../scanners/fade';
 
 export interface ChartPanelParams {
   /** Symbol shown when not linked to the selection. */
@@ -49,6 +55,30 @@ const DOWN = '#f0464f';
 /** Extended-hours candles are drawn faded, as in thinkorswim / TradingView. */
 const EXT_ALPHA = '66';
 const HIDDEN = 'rgba(0,0,0,0)';
+
+const LEVEL_STYLE: Record<LevelKind, { color: string; style: LineStyle }> = {
+  hod: { color: '#6b7587', style: LineStyle.Dashed },
+  risk: { color: '#f5a524', style: LineStyle.Dashed },
+  trigger: { color: DOWN, style: LineStyle.Dotted },
+  confirmed: { color: DOWN, style: LineStyle.Solid },
+  lowerHigh: { color: '#f472b6', style: LineStyle.Dashed },
+};
+
+const MARK_STYLE: Partial<Record<AlertType, { color: string; text: string }>> = {
+  topping: { color: '#f5a524', text: 'TOP' },
+  rejection_confirmed: { color: DOWN, text: 'CONF' },
+  failed_bounce: { color: '#f472b6', text: 'LH' },
+  vwap_bounce: { color: '#a78bfa', text: 'VWAP' },
+};
+
+/** Stage hints for a short seller sizing in: start small on topping, add on confirmation. */
+const STAGE_HINT: Partial<Record<FadeState['stage'], string>> = {
+  extension: 'Extended above VWAP and making highs: watch for a topping tail or a failed new high.',
+  rejection: 'Topping: starter size. Risk is a new high over RISK; add on a close under CONFIRMS.',
+  confirmation: 'Rejection confirmed: the add. Risk stays over the rejection high.',
+  fade: 'On the back side: do not chase. Add when a bounce makes a lower high and rolls over (LH), risk over that high.',
+  'vwap-bounce': 'Bounced into VWAP from below: backside add if it fails here.',
+};
 
 const toTime = (ms: number) => (ms / 1000) as UTCTimestamp;
 const etFmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts });
@@ -136,7 +166,12 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
     ema20: [],
   });
   const hovering = useRef(false);
+  const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const levelLines = useRef<IPriceLine[]>([]);
+  const [fade, setFade] = useState<FadeState | null>(null);
   // Read by `render`, which the long-lived live-bar callback also calls.
+  const symbolRef = useRef(symbol);
+  symbolRef.current = symbol;
   const settings = useRef({ timeframe, extendedHours });
   settings.current = { timeframe, extendedHours };
   const [legend, setLegend] = useState<Legend | null>(null);
@@ -157,6 +192,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
     if (!containerRef.current) return;
     const created = createChartIn(containerRef.current);
     chartRef.current = created;
+    markers.current = createSeriesMarkers(created.series.candles, []);
     const onMove = (p: MouseEventParams<Time>) => {
       const i = p.logical === undefined ? -1 : Math.round(p.logical);
       hovering.current = p.point !== undefined && i >= 0 && i < shown.current.bars.length;
@@ -167,6 +203,8 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
       created.chart.unsubscribeCrosshairMove(onMove);
       created.chart.remove();
       chartRef.current = null;
+      markers.current = null;
+      levelLines.current = [];
     };
   }, []);
 
@@ -181,6 +219,20 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
     };
   };
   const latestLegend = () => legendAt(shown.current.bars.length - 1);
+
+  /** Short-side signals from the alert feed, on the bars that produced them. */
+  const drawSignals = () => {
+    const sym = symbolRef.current;
+    if (!markers.current) return;
+    const times = shown.current.bars.map((b) => b.timestamp);
+    const marks: SeriesMarker<Time>[] = sym
+      ? signalMarks(marketData.alerts, sym, times).map((m) => {
+          const st = MARK_STYLE[m.type]!;
+          return { time: toTime(m.barTime), position: 'aboveBar', shape: 'arrowDown', color: st.color, text: st.text };
+        })
+      : [];
+    markers.current.setMarkers(marks);
+  };
 
   /** Recomputes the displayed bars and indicators; `full` redraws everything, otherwise only the last point. */
   const render = (full: boolean) => {
@@ -226,6 +278,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
       c.series.ema9.update(point(b, ema9[i]!));
       c.series.ema20.update(point(b, ema20[i]!));
     }
+    if (full) drawSignals();
     if (!hovering.current) setLegend(latestLegend());
   };
 
@@ -261,6 +314,32 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
       off();
     };
   }, [symbol]);
+
+  // The setup stage comes with the symbol's snapshot; new signals arrive on the alert feed.
+  useEffect(() => {
+    setFade(symbol ? (marketData.rows.get(symbol)?.fade ?? null) : null);
+    if (!symbol) return;
+    const offRows = marketData.onRows((changed, reset) => {
+      const row = reset ? marketData.rows.get(symbol) : changed.find((r) => r.symbol === symbol);
+      if (row || reset) setFade(row?.fade ?? null);
+    });
+    const offAlerts = marketData.onAlerts((added, reset) => {
+      if (reset || added.some((a) => a.symbol === symbol)) drawSignals();
+    });
+    return () => {
+      offRows();
+      offAlerts();
+    };
+  }, [symbol]);
+
+  useEffect(() => {
+    const candles = chartRef.current?.series.candles;
+    if (!candles) return;
+    levelLines.current.forEach((l) => candles.removePriceLine(l));
+    levelLines.current = fadeLevels(fade).map((l) =>
+      candles.createPriceLine({ price: l.price, title: l.title, color: LEVEL_STYLE[l.kind].color, lineStyle: LEVEL_STYLE[l.kind].style, lineWidth: 1, axisLabelVisible: true }),
+    );
+  }, [fade]);
 
   // Timeframe / session filter changes re-aggregate what's already loaded.
   useEffect(() => {
@@ -339,11 +418,19 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
             {ind.label}
           </button>
         ))}
+        {fade && fade.stage !== 'spike' && (
+          <span
+            title={STAGE_HINT[fade.stage]}
+            className={clsx('ml-auto rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1', STAGE_META[fade.stage].badge)}
+          >
+            {fade.stage === 'rejection' ? 'TOPPING · STARTER' : STAGE_META[fade.stage].label}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => update({ extendedHours: !extendedHours })}
           title="Show pre-market and after-hours bars"
-          className={clsx('ml-auto rounded px-1.5 py-px text-[11px] font-medium transition-colors', extendedHours ? 'bg-violet/15 text-violet' : 'text-muted hover:text-dim')}
+          className={clsx('rounded px-1.5 py-px text-[11px] font-medium transition-colors', !(fade && fade.stage !== 'spike') && 'ml-auto', extendedHours ? 'bg-violet/15 text-violet' : 'text-muted hover:text-dim')}
         >
           Ext hrs
         </button>
