@@ -147,6 +147,8 @@ export interface FadeState {
   confirmLevel: number | null;
   /** High of the last failed backside bounce: the risk for an add. */
   lowerHigh: number | null;
+  /** Closed a 1-minute bar under VWAP since topping (regular hours): the main add. */
+  vwapBroken: boolean;
 }
 
 // ── Trading halts ──
@@ -215,6 +217,7 @@ export const ALERT_TYPES = [
   'resume',
   'topping',
   'rejection_confirmed',
+  'vwap_break',
   'failed_bounce',
   'vwap_bounce',
 ] as const;

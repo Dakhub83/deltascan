@@ -33,6 +33,7 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   topping: 5 * 60_000,
   rejection_confirmed: 5 * 60_000,
   failed_bounce: 3 * 60_000,
+  vwap_break: 5 * 60_000,
   vwap_bounce: 5 * 60_000,
 };
 

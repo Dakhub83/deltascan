@@ -24,7 +24,7 @@ import { ChartCandlestick, Link2, Link2Off } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
 import { TIMEFRAMES, aggregate, ema, sessionVwap, timeframeLabel, upsertBar, type Timeframe } from '../lib/chartData';
-import { fadeLevels, signalMarks, type LevelKind } from '../lib/fadeSignals';
+import { fadeLevels, signalMarks, stageAdvice, type LevelKind } from '../lib/fadeSignals';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
@@ -66,18 +66,10 @@ const LEVEL_STYLE: Record<LevelKind, { color: string; style: LineStyle }> = {
 
 const MARK_STYLE: Partial<Record<AlertType, { color: string; text: string }>> = {
   topping: { color: '#f5a524', text: 'TOP' },
-  rejection_confirmed: { color: DOWN, text: 'CONF' },
+  rejection_confirmed: { color: '#f59e9e', text: 'CONF' },
+  vwap_break: { color: DOWN, text: 'VWAP BRK' },
   failed_bounce: { color: '#f472b6', text: 'LH' },
-  vwap_bounce: { color: '#a78bfa', text: 'VWAP' },
-};
-
-/** Stage hints for a short seller sizing in: start small on topping, add on confirmation. */
-const STAGE_HINT: Partial<Record<FadeState['stage'], string>> = {
-  extension: 'Extended above VWAP and making highs: watch for a topping tail or a failed new high.',
-  rejection: 'Topping: starter size. Risk is a new high over RISK; add on a close under CONFIRMS.',
-  confirmation: 'Rejection confirmed: the add. Risk stays over the rejection high.',
-  fade: 'On the back side: do not chase. Add when a bounce makes a lower high and rolls over (LH), risk over that high.',
-  'vwap-bounce': 'Bounced into VWAP from below: backside add if it fails here.',
+  vwap_bounce: { color: '#a78bfa', text: 'VWAP BNC' },
 };
 
 const toTime = (ms: number) => (ms / 1000) as UTCTimestamp;
@@ -169,6 +161,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const levelLines = useRef<IPriceLine[]>([]);
   const [fade, setFade] = useState<FadeState | null>(null);
+  const starterPct = useUiStore((s) => s.settings.shortLimits.starterPct);
   // Read by `render`, which the long-lived live-bar callback also calls.
   const symbolRef = useRef(symbol);
   symbolRef.current = symbol;
@@ -366,6 +359,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
 
   const toggleLink = () => (linked ? update({ linked: false, symbol }) : update({ linked: true }));
 
+  const advice = fade ? stageAdvice(fade, starterPct) : null;
   const bar = legend?.bar;
   const barChange = bar && legend.prevClose ? ((bar.close - legend.prevClose) / legend.prevClose) * 100 : null;
 
@@ -418,19 +412,22 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
             {ind.label}
           </button>
         ))}
-        {fade && fade.stage !== 'spike' && (
+        {advice?.label && fade && (
           <span
-            title={STAGE_HINT[fade.stage]}
-            className={clsx('ml-auto rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1', STAGE_META[fade.stage].badge)}
+            title={advice.hint}
+            className={clsx(
+              'ml-auto rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1',
+              fade.vwapBroken && fade.stage !== 'vwap-bounce' ? 'bg-down/25 text-down ring-down/50' : STAGE_META[fade.stage].badge,
+            )}
           >
-            {fade.stage === 'rejection' ? 'TOPPING · STARTER' : STAGE_META[fade.stage].label}
+            {advice.label}
           </span>
         )}
         <button
           type="button"
           onClick={() => update({ extendedHours: !extendedHours })}
           title="Show pre-market and after-hours bars"
-          className={clsx('rounded px-1.5 py-px text-[11px] font-medium transition-colors', !(fade && fade.stage !== 'spike') && 'ml-auto', extendedHours ? 'bg-violet/15 text-violet' : 'text-muted hover:text-dim')}
+          className={clsx('rounded px-1.5 py-px text-[11px] font-medium transition-colors', !advice?.label && 'ml-auto', extendedHours ? 'bg-violet/15 text-violet' : 'text-muted hover:text-dim')}
         >
           Ext hrs
         </button>

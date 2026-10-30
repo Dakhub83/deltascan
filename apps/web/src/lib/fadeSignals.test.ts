@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Alert, FadeState } from '@deltascan/shared';
-import { fadeLevels, signalMarks } from './fadeSignals';
+import { fadeLevels, signalMarks, stageAdvice } from './fadeSignals';
 
 const T = Date.parse('2026-10-29T14:00:00Z');
 const MIN = 60_000;
@@ -14,6 +14,7 @@ const fade = (over: Partial<FadeState>): FadeState => ({
   rejectionLow: null,
   confirmLevel: null,
   lowerHigh: null,
+  vwapBroken: false,
   ...over,
 });
 
@@ -68,5 +69,16 @@ describe('signalMarks', () => {
     expect(signalMarks([alert('topping', 8), alert('topping', 7), alert('topping', 3, 'OTHER'), alert('vwap_bounce', 0)], 'RUN', fiveMin)).toEqual([
       { barTime: T + 5 * MIN, type: 'topping', price: 2.5 },
     ]);
+  });
+});
+
+describe('stageAdvice', () => {
+  it('sizes the starter on the top and the rest on the VWAP break', () => {
+    expect(stageAdvice(fade({ stage: 'rejection' }), 30).label).toBe('TOPPING · 30% STARTER');
+    expect(stageAdvice(fade({ stage: 'confirmation' }), 30)).toMatchObject({ label: 'CONFIRMED' });
+    expect(stageAdvice(fade({ stage: 'confirmation' }), 30).hint).toContain('70% add comes on a close under VWAP');
+    expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true }), 30).label).toBe('UNDER VWAP · ADD 70%');
+    expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true }), 25).label).toBe('UNDER VWAP · ADD 75%');
+    expect(stageAdvice(fade({ stage: 'spike' }), 30).label).toBeNull();
   });
 });

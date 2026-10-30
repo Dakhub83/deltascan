@@ -27,7 +27,7 @@ export const PRESETS: ScannerPreset[] = [
   {
     id: 'fade-setups',
     title: 'Fade Setups',
-    description: `Runners past the spike, ranked by setup stage · price ≥ $${FADE.minPrice}, float ${FADE.minFloat / 1e6}–${FADE.maxFloat / 1e6}M`,
+    description: `Runners past the spike, ranked by setup stage · price ≥ $${FADE.minPrice}, any float`,
     icon: ArrowDownRight,
     filter: (s) => s.fade !== null && s.fade.stage !== 'spike' && passesFloors(s),
     // Confirmed rejections first: those are the ones you can act on.

@@ -20,7 +20,36 @@ export function fadeLevels(fade: FadeState | null): FadeLevel[] {
   return out;
 }
 
-export const SIGNAL_TYPES: readonly AlertType[] = ['topping', 'rejection_confirmed', 'failed_bounce', 'vwap_bounce'];
+/**
+ * Badge text and hint for the trader's scale-in: a front-side starter on the top, the rest once
+ * it closes under VWAP. A failed bounce under VWAP is the next spot to add if the rest isn't on.
+ */
+export function stageAdvice(fade: FadeState, starterPct: number): { label: string | null; hint: string } {
+  const rest = 100 - starterPct;
+  switch (fade.stage) {
+    case 'spike':
+      return { label: null, hint: '' };
+    case 'extension':
+      return { label: 'EXTENDED', hint: 'Extended above VWAP and making highs: wait for a topping tail or a failed new high.' };
+    case 'rejection':
+      return {
+        label: `TOPPING · ${starterPct}% STARTER`,
+        hint: `Front side: ${starterPct}% starter. Wrong on a new high over RISK. The other ${rest}% waits for a VWAP break.`,
+      };
+    case 'confirmation':
+      return fade.vwapBroken
+        ? { label: `UNDER VWAP · ADD ${rest}%`, hint: `Under VWAP: add the remaining ${rest}%. Off on a reclaim over VWAP.` }
+        : { label: 'CONFIRMED', hint: `Rejection confirmed: hold the ${starterPct}% starter. The ${rest}% add comes on a close under VWAP.` };
+    case 'fade':
+      return fade.vwapBroken
+        ? { label: `UNDER VWAP · ADD ${rest}%`, hint: `Under VWAP: the ${rest}% add. If it is already on, a failed bounce (LH) is the next spot; do not chase extended moves.` }
+        : { label: 'FADING', hint: `Fading but still over VWAP: hold the starter, the ${rest}% add waits for a close under VWAP.` };
+    case 'vwap-bounce':
+      return { label: 'VWAP BOUNCE', hint: `Bounced back into VWAP from below: if it fails here, add whatever of the ${rest}% is not on yet.` };
+  }
+}
+
+export const SIGNAL_TYPES: readonly AlertType[] = ['topping', 'rejection_confirmed', 'vwap_break', 'failed_bounce', 'vwap_bounce'];
 
 export interface SignalMark {
   /** Start of the displayed bar the signal belongs to. */

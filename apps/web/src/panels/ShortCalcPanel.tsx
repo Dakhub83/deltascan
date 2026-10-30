@@ -25,6 +25,7 @@ const LIMIT_FIELDS: { key: keyof ShortLimits; label: string; step: string; prefi
   { key: 'addStopOffset', label: 'Add stop: last entry +', step: '0.01', prefix: '$' },
   { key: 'hotkeyOffset', label: 'DAS hotkey: avg cost ±', step: '0.01', prefix: '$' },
   { key: 'minStopDistance', label: 'Warn if first stop under', step: '0.01', prefix: '$' },
+  { key: 'starterPct', label: 'Front-side starter (% of size)', step: '5' },
 ];
 
 const num = (s: string | undefined) => (s && s.trim() !== '' ? Number(s) : Number.NaN);
@@ -70,7 +71,7 @@ function LimitsEditor({ onDone }: { onDone: () => void }) {
     const next = { ...limits };
     for (const f of LIMIT_FIELDS) {
       const v = Number(draft[f.key]);
-      if (Number.isFinite(v) && v > 0) next[f.key] = v;
+      if (Number.isFinite(v) && v > 0 && (f.key !== 'starterPct' || v < 100)) next[f.key] = v;
     }
     updateSettings({ shortLimits: next, shortLimitsSet: true });
     onDone();

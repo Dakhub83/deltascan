@@ -12,6 +12,8 @@ export interface ShortLimits {
   premarketMaxShares: number;
   /** First stops closer than this to the entry get a warning. */
   minStopDistance: number;
+  /** Front-side starter as a percent of the full position; the rest goes on once VWAP breaks. */
+  starterPct: number;
 }
 
 export const DEFAULT_SHORT_LIMITS: ShortLimits = {
@@ -22,6 +24,7 @@ export const DEFAULT_SHORT_LIMITS: ShortLimits = {
   hotkeyOffset: 0.03,
   premarketMaxShares: 100,
   minStopDistance: 0.05,
+  starterPct: 30,
 };
 
 export interface PlannedLot {

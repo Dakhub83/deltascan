@@ -5,6 +5,7 @@ import {
   ArrowDownRight,
   Blocks,
   ChevronsDown,
+  CircleArrowDown,
   ChevronsUp,
   Flame,
   Pause,
@@ -99,6 +100,14 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     text: 'text-down',
     badge: 'bg-down/12 text-down ring-down/25',
     tone: [988, 740, 523],
+  },
+  vwap_break: {
+    label: 'VWAP Break (add the rest)',
+    short: 'VWAP BRK',
+    icon: CircleArrowDown,
+    text: 'text-down',
+    badge: 'bg-down/20 text-down ring-down/40',
+    tone: [988, 784, 587, 392],
   },
   failed_bounce: {
     label: 'Failed Bounce (lower high)',

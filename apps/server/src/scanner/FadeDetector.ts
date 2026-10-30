@@ -31,12 +31,10 @@ export interface FadeOptions {
   /** Past this far off the high, a failed bounce is chasing the back side and doesn't alert. */
   maxBounceOffHighPct?: number;
   /**
-   * Only names inside these floors are tracked, so alerts match what the Fade Setups scanner
-   * shows (keep in sync with FADE in apps/web/src/scanners/fade.ts). Unknown float passes.
+   * Only names at or above this price are tracked, so alerts match what the Fade Setups scanner
+   * shows (keep in sync with FADE in apps/web/src/scanners/fade.ts). Float isn't a filter.
    */
   minPrice?: number;
-  minFloat?: number;
-  maxFloat?: number;
   /** Bars older than this are replayed silently (startup backfill), without alerts. */
   alertMaxAgeMs?: number;
 }
@@ -55,6 +53,8 @@ interface SymbolState {
   confirmLevel: number | null;
   /** Backside tracking: the low of the current leg down, and the high of the bounce off it. */
   swingLow: number | null;
+  /** Closed under VWAP since the stock topped; cleared by a new extension or a reclaim. */
+  vwapBroken: boolean;
   bounce: { high: number; bars: number } | null;
   lowerHigh: number | null;
   prev: Bar | null;
@@ -71,6 +71,7 @@ const fresh = (): SymbolState => ({
   rejection: null,
   confirmLevel: null,
   swingLow: null,
+  vwapBroken: false,
   bounce: null,
   lowerHigh: null,
   prev: null,
@@ -81,8 +82,8 @@ const fmt = (n: number) => n.toFixed(n < 1 ? 4 : 2);
 /**
  * Tracks each runner through Spike → Extension → Rejection → Confirmation → Fade on completed
  * 1-minute bars (the bar in progress is ignored, so nothing confirms intrabar). Fires `topping`
- * (the starter-size signal), `rejection_confirmed`, `failed_bounce` (a lower high rolling over:
- * the add) and `vwap_bounce` alerts. VWAP is the
+ * (the starter), `rejection_confirmed`, `vwap_break` (the first close under VWAP after the top: the
+ * main add), `failed_bounce` (a lower high rolling over) and `vwap_bounce` alerts. VWAP is the
  * snapshot's current session VWAP.
  */
 export class FadeDetector {
@@ -108,8 +109,6 @@ export class FadeDetector {
       bounceRollBars: 3,
       maxBounceOffHighPct: 35,
       minPrice: 1,
-      minFloat: 2e6,
-      maxFloat: 30e6,
       alertMaxAgeMs: 3 * 60_000,
       ...opts,
     };
@@ -142,13 +141,13 @@ export class FadeDetector {
           rejectionLow: st.rejection?.low ?? null,
           confirmLevel: st.confirmLevel,
           lowerHigh: st.lowerHigh,
+          vwapBroken: st.vwapBroken,
         }
       : null;
   }
 
   private eligible(s: Readonly<SymbolSnapshot>): boolean {
     if (s.last !== null && s.last < this.o.minPrice) return false;
-    if (s.floatShares !== null && (s.floatShares < this.o.minFloat || s.floatShares > this.o.maxFloat)) return false;
     return true;
   }
 
@@ -202,6 +201,7 @@ export class FadeDetector {
         st.swingLow = null;
         st.bounce = null;
         st.lowerHigh = null;
+        st.vwapBroken = false;
       }
     };
     const alert = (type: AlertType, detail: string) => live && this.onAlert(type, snap.symbol, b.close, detail);
@@ -287,6 +287,18 @@ export class FadeDetector {
           enter('fade');
         }
         break;
+    }
+
+    const topped = st.stage !== null && st.stage !== 'spike' && st.stage !== 'extension';
+    if (st.vwapBroken && vwap !== null && b.close > vwap * (1 + o.vwapTouch)) {
+      // Squeezed back over VWAP: the add is off until it breaks again.
+      st.vwapBroken = false;
+    } else if (topped && !st.vwapBroken && vwap !== null && b.close < vwap) {
+      st.vwapBroken = true;
+      alert(
+        'vwap_break',
+        `Closed ${fmt(b.close)} under VWAP ${fmt(vwap)}, ${offHigh.toFixed(1)}% off high · add the rest; off on a close over ${fmt(vwap * (1 + o.vwapTouch))}`,
+      );
     }
     return st;
   }

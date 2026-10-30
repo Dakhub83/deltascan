@@ -107,13 +107,50 @@ describe('FadeDetector', () => {
     const bounce: [number, number, number, number] = [2.22, 2.29, 2.2, 2.26]; // high within 1.5% of 2.30, closes under
     const r = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, bounce]);
     expect(r.state?.stage).toBe('vwap-bounce');
-    expect(r.alerts).toEqual(['topping', 'rejection_confirmed', 'vwap_bounce']);
+    expect(r.alerts).toEqual(['topping', 'rejection_confirmed', 'vwap_break', 'vwap_bounce']);
   });
 
-  it('ignores names outside the price and float floors', () => {
-    expect(run([SPIKE, EXTEND], { floatShares: 500_000 }).state).toBeNull(); // too low a float
-    expect(run([SPIKE, EXTEND], { floatShares: 800e6 }).state).toBeNull(); // large cap
-    expect(run([SPIKE, EXTEND], { last: 0.6 }).state).toBeNull(); // sub-$1
+  it('alerts vwap_break once on the first close under VWAP after the top', () => {
+    const details: string[] = [];
+    const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+    const lose: [number, number, number, number] = [2.5, 2.5, 2.2, 2.22];
+    const lower: [number, number, number, number] = [2.22, 2.24, 2.1, 2.12];
+    const state = d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT, CONFIRM, lose, lower]), NOW);
+    expect(state).toMatchObject({ stage: 'fade', vwapBroken: true });
+    expect(details.filter((x) => x.startsWith('vwap_break'))).toEqual([
+      'vwap_break: Closed 2.22 under VWAP 2.30, 18.4% off high · add the rest; off on a close over 2.33',
+    ]);
+  });
+
+  it("doesn't call a VWAP break before the stock has topped", () => {
+    // Extended names sit above VWAP by definition; a spike that never extended isn't a short yet.
+    const r = run([SPIKE, [2.35, 2.36, 2.25, 2.28]]);
+    expect(r.alerts).not.toContain('vwap_break');
+  });
+
+  it('a VWAP reclaim clears the break so the next one alerts again', () => {
+    const lose: [number, number, number, number] = [2.5, 2.5, 2.2, 2.22];
+    const bounce: [number, number, number, number] = [2.22, 2.29, 2.2, 2.26];
+    const reclaim: [number, number, number, number] = [2.26, 2.4, 2.26, 2.38];
+    const r = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, bounce, reclaim]);
+    expect(r.state).toMatchObject({ stage: 'spike', vwapBroken: false });
+  });
+
+  it('a squeeze back over VWAP clears the break even below the high, and the next break alerts', () => {
+    const lose: [number, number, number, number] = [2.5, 2.5, 2.2, 2.22];
+    const squeeze: [number, number, number, number] = [2.22, 2.6, 2.22, 2.58]; // over VWAP 2.30, under the 2.72 high
+    const again: [number, number, number, number] = [2.58, 2.58, 2.2, 2.21];
+    const squeezed = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, squeeze]);
+    expect(squeezed.state).toMatchObject({ stage: 'fade', vwapBroken: false });
+    const broke = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, squeeze, again]);
+    expect(broke.state?.vwapBroken).toBe(true);
+    expect(broke.alerts.filter((a) => a === 'vwap_break')).toHaveLength(2);
+  });
+
+  it('ignores sub-$1 names but tracks any float', () => {
+    expect(run([SPIKE, EXTEND], { last: 0.6 }).state).toBeNull();
+    expect(run([SPIKE, EXTEND], { floatShares: 500_000, last: 2.65 }).state?.stage).toBe('extension');
+    expect(run([SPIKE, EXTEND], { floatShares: 800e6, last: 2.65 }).state?.stage).toBe('extension');
     expect(run([SPIKE, EXTEND], { floatShares: 10e6, last: 2.65 }).state?.stage).toBe('extension');
   });
 
