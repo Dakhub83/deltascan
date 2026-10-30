@@ -53,6 +53,30 @@ describe('FadeDetector', () => {
     expect(details).toEqual(['topping: Topping tail at 2.72 (41% wick) · starter: risk over 2.72, confirms under 2.55']);
   });
 
+  it('alerts topping on a reversal candle that opens at the high and sells straight down (XRTA)', () => {
+    // Real sequence from the simulated feed: prevClose 2.96, VWAP 3.67, a 5.30 new high that closed at its low.
+    const details: string[] = [];
+    const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+    const xrta: [number, number, number, number][] = [
+      [3.94, 5.14, 3.94, 4.86],
+      [4.86, 4.98, 4.52, 4.93],
+      [4.21, 4.84, 4.17, 4.84],
+      [4.92, 4.96, 4.92, 4.96],
+      [4.95, 5.21, 4.71, 4.71],
+      [4.7, 5.2, 4.48, 5.2],
+      [5.2, 5.3, 4.6, 4.6], // 13% range, 14% upper wick, closes at the low
+    ];
+    const state = d.evaluate(snap({ prevClose: 2.96, vwap: 3.67 }), bars(xrta), NOW);
+    expect(state).toMatchObject({ stage: 'rejection', rejectionHigh: 5.3, rejectionLow: 4.6 });
+    expect(details.at(-1)).toBe('topping: Reversal candle off 5.30: 13.2% range, closed 4.60 near the low · starter: risk over 5.30, confirms under 4.60');
+  });
+
+  it("doesn't call a small red candle at the high a reversal", () => {
+    // Closes at its low but the range is under 3% of the price: noise, not a top.
+    const small: [number, number, number, number] = [2.69, 2.7, 2.65, 2.65];
+    expect(run([SPIKE, EXTEND, small]).alerts).not.toContain('topping');
+  });
+
   it('alerts topping when it stalls under the high and a red bar breaks the prior low', () => {
     const details: string[] = [];
     const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
@@ -134,6 +158,16 @@ describe('FadeDetector', () => {
     const reclaim: [number, number, number, number] = [2.26, 2.4, 2.26, 2.38];
     const r = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, bounce, reclaim]);
     expect(r.state).toMatchObject({ stage: 'spike', vwapBroken: false });
+  });
+
+  it('a candle that opens over VWAP and closes under it is a break, not a bounce', () => {
+    // VWAP 2.00. Topped without a clean rejection: 17% off the high, straight to fade, still over VWAP.
+    const flush: [number, number, number, number] = [2.65, 2.65, 2.24, 2.25];
+    const through: [number, number, number, number] = [2.25, 2.26, 1.88, 1.9]; // opens over VWAP, closes under
+    expect(run([SPIKE, EXTEND, flush], { vwap: 2.0 }).state).toMatchObject({ stage: 'fade', vwapBroken: false });
+    const r = run([SPIKE, EXTEND, flush, through], { vwap: 2.0 });
+    expect(r.state).toMatchObject({ stage: 'fade', vwapBroken: true });
+    expect(r.alerts).toEqual(['vwap_break']);
   });
 
   it('a squeeze back over VWAP clears the break even below the high, and the next break alerts', () => {

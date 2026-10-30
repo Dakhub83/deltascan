@@ -16,6 +16,9 @@ export const derived = {
   hodDistPct: (s) => (s.last != null && s.high ? ((s.high - s.last) / s.high) * 100 : null),
   spreadPct: (s) => (s.bid && s.ask && s.ask >= s.bid ? ((s.ask - s.bid) / ((s.ask + s.bid) / 2)) * 100 : null),
   dollarVolume: (s) => (s.vwap != null ? s.vwap * s.volume : null),
+  /** Dollar move over the last 5 minutes, recovered from the 5-minute % change. */
+  chg5mUsd: (s) => (s.last != null && s.chg5mPct != null ? s.last - s.last / (1 + s.chg5mPct / 100) : null),
+  offLowPct: (s) => pctOf(s.last, s.low),
 } satisfies Record<string, Getter>;
 
 /** Tier thresholds; checked in this order, so a sub-$1 low-float stock is tagged sub-$1. */
@@ -102,6 +105,18 @@ export const COLUMNS = {
     valueGetter: getter(derived.hodDistPct),
     valueFormatter: (p) => (p.value == null ? '—' : p.value < 0.005 ? 'AT HOD' : `-${p.value.toFixed(2)}%`),
     cellClassRules: { 'text-up font-semibold': (p) => p.value != null && p.value < 0.005 },
+  },
+  chg5mUsd: {
+    ...num, colId: 'chg5mUsd', headerName: '5m $', width: 72,
+    valueGetter: getter(derived.chg5mUsd),
+    valueFormatter: (p) => (p.value == null ? '—' : `${p.value >= 0 ? '+' : '−'}${Math.abs(p.value).toFixed(2)}`),
+    cellClassRules: signRules(),
+  },
+  offLowPct: {
+    ...num, colId: 'offLowPct', headerName: 'Off Low', width: 86,
+    valueGetter: getter(derived.offLowPct),
+    valueFormatter: (p) => (p.value == null ? '—' : `+${p.value.toFixed(1)}%`),
+    cellClassRules: { 'text-up': (p) => (p.value ?? 0) >= 3 },
   },
   range: { colId: 'range', headerName: 'Day Range', width: 110, sortable: false, cellRenderer: RangeCell },
   vwap: { ...num, colId: 'vwap', field: 'vwap', headerName: 'VWAP', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },

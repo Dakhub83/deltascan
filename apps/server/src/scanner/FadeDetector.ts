@@ -7,6 +7,13 @@ export interface FadeOptions {
   extensionVwapPct?: number;
   /** A rejection candle's upper wick is at least this fraction of its range. */
   rejectionWick?: number;
+  /**
+   * A reversal candle: red, at the high, closing in this bottom fraction of its range…
+   * (opens near the high and sells straight down, so it has little upper wick)
+   */
+  reversalClosePos?: number;
+  /** …with a range of at least this percent of the price. */
+  reversalMinRangePct?: number;
   /** A rejection candle's high is within this fraction of the session high. */
   nearHigh?: number;
   /** Bars without a new high before a red bar breaking the prior low also counts as a rejection. */
@@ -14,7 +21,7 @@ export interface FadeOptions {
   /** A stall only counts while the previous bar is within this fraction of the high. */
   stallNearHigh?: number;
   /**
-   * Past this far off the high, a confirmation is the back side of the move: the setup goes
+   * Past this far off the high, a topping candle or a confirmation is the back side of the move: the setup goes
    * straight to fade with no alert, so the alert never invites a late entry.
    */
   maxConfirmOffHighPct?: number;
@@ -98,6 +105,8 @@ export class FadeDetector {
       spikeMinPct: 15,
       extensionVwapPct: 5,
       rejectionWick: 0.4,
+      reversalClosePos: 0.3,
+      reversalMinRangePct: 3,
       nearHigh: 0.01,
       stallBars: 3,
       stallNearHigh: 0.03,
@@ -220,20 +229,26 @@ export class FadeDetector {
       case 'extension': {
         const range = b.high - b.low;
         const wick = b.high - Math.max(b.open, b.close);
-        const toppingTail = range > 0 && b.close < b.open && b.high >= st.high * (1 - o.nearHigh) && wick / range >= o.rejectionWick;
+        const atHigh = range > 0 && b.close < b.open && b.high >= st.high * (1 - o.nearHigh);
+        const toppingTail = atHigh && wick / range >= o.rejectionWick;
+        const reversal =
+          atHigh && (b.close - b.low) / range <= o.reversalClosePos && (range / b.high) * 100 >= o.reversalMinRangePct;
         const stalled =
           st.barsSinceHigh >= o.stallBars &&
           b.close < b.open &&
           st.prev !== null &&
           st.prev.high >= st.high * (1 - o.stallNearHigh) &&
           b.close < st.prev.low;
-        if (toppingTail || stalled) {
-          st.rejection = toppingTail ? { high: b.high, low: b.low } : { high: st.high, low: b.low };
+        // A top called this far off the high would be a late starter: the else branch fades it silently.
+        if ((toppingTail || reversal || stalled) && offHigh < o.maxConfirmOffHighPct) {
+          st.rejection = toppingTail || reversal ? { high: b.high, low: b.low } : { high: st.high, low: b.low };
           enter('rejection');
           const r = st.rejection;
           const why = toppingTail
             ? `Topping tail at ${fmt(r.high)} (${Math.round((wick / range) * 100)}% wick)`
-            : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
+            : reversal
+              ? `Reversal candle off ${fmt(r.high)}: ${((range / b.high) * 100).toFixed(1)}% range, closed ${fmt(b.close)} near the low`
+              : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
           alert('topping', `${why} · starter: risk over ${fmt(r.high)}, confirms under ${fmt(r.low)}`);
         } else if (offHigh >= o.maxConfirmOffHighPct) {
           enter('fade'); // topped without a clean rejection; too late to call one now
@@ -271,7 +286,8 @@ export class FadeDetector {
           st.rejection = null;
           st.confirmLevel = null;
           enter('extension');
-        } else if (vwap !== null && b.close < vwap && b.high >= vwap * (1 - o.vwapTouch)) {
+        } else if (st.vwapBroken && vwap !== null && b.close < vwap && b.high >= vwap * (1 - o.vwapTouch)) {
+          // Already under VWAP before this bar: a candle that opens over it and closes under is the break, not a bounce.
           enter('vwap-bounce');
           alert('vwap_bounce', `Bounced into VWAP ${fmt(vwap)} from below · ${offHigh.toFixed(1)}% off high`);
         }

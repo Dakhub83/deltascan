@@ -70,7 +70,7 @@ npm run typecheck    # all workspaces
   - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
 
 - **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
-  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, or a stall under it with a red bar breaking the prior low), `rejection_confirmed`, `vwap_break` (the first 1-minute close under VWAP after the top, `FadeState.vwapBroken`, cleared by a close back over VWAP; the trader's main add), `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently.
+  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, a reversal candle at the high closing in the bottom 30 % of a ≥ 3 % range, or a stall under it with a red bar breaking the prior low; none of them alert once the close is 15 %+ off the high), `rejection_confirmed`, `vwap_break` (the first 1-minute close under VWAP after the top, `FadeState.vwapBroken`, cleared by a close back over VWAP; the trader's main add), `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently.
   - The chart draws the setup from `fade` (`lib/fadeSignals.ts`): HOD, RISK (rejection high), CONFIRMS < (rejection low) and LH · ADD RISK price lines, TOP / CONF / LH / VWAP markers from the alert feed, and a stage badge whose text and tooltip follow the trader's scale-in (`stageAdvice`): a front-side starter of `shortLimits.starterPct` (default 30 %, editable in the short calculator's limits) on the top, the rest on the VWAP break.
   - The detector's price floor duplicates `FADE` in `apps/web/src/scanners/fade.ts`; keep them in sync. There's no float filter (the trader asked for it removed); the scanner alone keeps a $5M market-cap floor.
   - Scanners are `fade-setups` and `backside-vwap`; columns are `fadeStage`, `offHighPct` and `sinceHighMin`.
@@ -94,6 +94,8 @@ npm run typecheck    # all workspaces
 
 - **Ticker tape**: `components/TickerTape.tsx` under the top bar (Settings → Display → Scrolling ticker). It scrolls with requestAnimationFrame over two copies of the list. Prices refresh every second, the symbol list (`pickTapeSymbols` in `lib/tickerTape.ts`) every 10 s. Hover pauses it, and with reduced motion it becomes a static strip you can scroll.
 
+- **Bullish scanners** (Trade Ideas-style, the early warning for future fades): New Highs on 2× RV, Up 50¢ in 5 Min, Under $20 Moving Up Fast, Turbo Breaks Up, Rallying off the Bottom. Thresholds are in `BULLISH` in `presets.ts` (tests in `presets.test.ts`); new columns `chg5mUsd` and `offLowPct`. Scans needing daily bars (yearly highs, up 5 days, MA breakouts), RSI or an earnings calendar wait on ARCHITECTURE steps 2–3.
+
 - **Price filter**: each scanner window has its own price range (the **$ Price** button in its toolbar), applied on top of the scanner's filter, in `FilterPanelParams.priceRange`, so it's saved with layouts. Logic and quick ranges are in `scanners/priceRange.ts`. Symbols with no price yet are hidden while a range is set. A **Float** button beside it works the same way (`FilterPanelParams.floatRange`, `scanners/floatRange.ts`; bounds typed in millions or with K/M); unknown floats pass, because the live feed has no float data yet.
 
 ### Still to do (in order)
@@ -101,7 +103,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (62 server, 31 web), typecheck clean.**
+Status: **tests pass (65 server, 36 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).
