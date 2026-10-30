@@ -53,7 +53,7 @@ npm run typecheck    # all workspaces
 
 - **Extended hours**: `sessionClock.tradeSessionAt` / `marketSessionAt` classify by ET time (holidays aren't modelled). `SymbolStore` books pre/post prints into `pre*` / `post*` fields and `regularClose`. Those prints move `last` and `changePct` but not the regular open/high/low/volume/VWAP. NHOD / NLOD / VWAP alerts only run on regular prints. The session reaches the UI through `hello` and `stats`. The scanners are **Pre-market Gainers** and **After-hours Movers** (thresholds in `EXTENDED` in `presets.ts`). `MOCK_SESSION=pre|regular|post` picks the session the simulator runs.
 
-- **Charts**: `panels/ChartPanel.tsx` (lightweight-charts 5.2) with calculations in `lib/chartData.ts`.
+- **Charts**: `panels/ChartPanel.tsx` (history fetches time out after 10 s and retry, so a server restart mid-load doesn't leave a blank chart) (lightweight-charts 5.2) with calculations in `lib/chartData.ts`.
   - `SymbolStore` builds 1-minute bars from every trade, tagged with `session` (`DEFAULT_MAX_BARS` 2,400, about 2½ days).
   - History is served at `GET /api/bars?symbol=` (proxied by Vite). Live bars go only to clients that sent `{ type: 'chart', symbols }`.
   - The mock emits a `history` event: the previous day's session plus today so far. Its paths pass exactly through the seeded open, high, low and last, but timestamps end at the real "now", so on mock the axis shows wall-clock times.
@@ -70,7 +70,8 @@ npm run typecheck    # all workspaces
   - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
 
 - **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
-  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, a reversal candle at the high closing in the bottom 30 % of a ≥ 3 % range, or a stall under it with a red bar breaking the prior low; none of them alert once the close is 15 %+ off the high), `rejection_confirmed`, `vwap_break` (the first 1-minute close under VWAP after the top, `FadeState.vwapBroken`, cleared by a close back over VWAP; the trader's main add), `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently.
+  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, a reversal candle at the high closing in the bottom 30 % of a ≥ 3 % range, or a stall under it with a red bar breaking the prior low; or a gap of 15 %+ closing back under its opening price; any of them can fire from Spike, since a gap-and-fail never extends; none alert once the close is 15 %+ off the high, and a bar that cancels a top with a new high is re-checked as the next top), `rejection_confirmed`, `vwap_break` (the first 1-minute close under VWAP after the top, `FadeState.vwapBroken`, cleared by a close back over VWAP; the trader's main add), `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently.
+  - `FadeDetector.signals(symbol)` keeps every signal it found, startup replay included (which never alerts), served at `GET /api/signals`; the chart merges it with live alerts for its markers. Bars before the overnight gap (≥ 4 h) are skipped, since today's prevClose would misjudge them. Fade-signal cooldowns are 60 s: the detector only fires on a stage change.
   - The chart draws the setup from `fade` (`lib/fadeSignals.ts`): HOD, RISK (rejection high), CONFIRMS < (rejection low) and LH · ADD RISK price lines, TOP / CONF / LH / VWAP markers from the alert feed, and a stage badge whose text and tooltip follow the trader's scale-in (`stageAdvice`): a front-side starter of `shortLimits.starterPct` (default 30 %, editable in the short calculator's limits) on the top, the rest on the VWAP break.
   - The detector's price floor duplicates `FADE` in `apps/web/src/scanners/fade.ts`; keep them in sync. There's no float filter (the trader asked for it removed); the scanner alone keeps a $5M market-cap floor.
   - Scanners are `fade-setups` and `backside-vwap`; columns are `fadeStage`, `offHighPct` and `sinceHighMin`.
@@ -103,7 +104,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (65 server, 36 web), typecheck clean.**
+Status: **tests pass (70 server, 37 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).

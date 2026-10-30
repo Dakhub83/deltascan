@@ -1,4 +1,4 @@
-import type { Alert, Bar, ClientMessage, CompanyProfile, DilutionReport, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, CompanyProfile, DilutionReport, FadeSignal, HaltEvent, ServerMessage, SymbolSnapshot } from '@deltascan/shared';
 import { useUiStore } from '../store/uiStore';
 import { upsertBar } from './chartData';
 
@@ -21,6 +21,8 @@ const HISTORY_SAMPLE_MS = 1_000;
 /** Minute-bar watchers are notified at most this often. */
 const MINUTE_BARS_NOTIFY_MS = 1_000;
 const MINUTE_BARS_RETRY_MS = 2_000;
+/** A request cut off by a server restart can otherwise hang forever behind the dev proxy. */
+const FETCH_TIMEOUT_MS = 10_000;
 
 /** One symbol's 1-minute bars, shared by every window watching it. */
 interface MinuteBarsEntry {
@@ -85,8 +87,15 @@ class MarketDataClient {
   }
 
   /** 1-minute bar history for a symbol, oldest first. */
+  /** Short-side signals the server found for the symbol, including ones it replayed without alerting. */
+  async fetchSignals(symbol: string): Promise<FadeSignal[]> {
+    const res = await fetch(`/api/signals?symbol=${encodeURIComponent(symbol)}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`signals request failed: ${res.status}`);
+    return (await res.json()) as FadeSignal[];
+  }
+
   async fetchBars(symbol: string): Promise<Bar[]> {
-    const res = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}`);
+    const res = await fetch(`/api/bars?symbol=${encodeURIComponent(symbol)}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`bars request failed: ${res.status}`);
     return (await res.json()) as Bar[];
   }

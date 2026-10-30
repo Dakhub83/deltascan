@@ -74,6 +74,7 @@ gateway = new ClientGateway({
   getSession: currentSession,
   dilution: sec ? (symbol) => sec.dilution(symbol) : undefined,
   profile: profiles.enabled ? (symbol) => profiles.profile(symbol) : undefined,
+  fadeSignals: (symbol) => fades.signals(symbol),
   logger,
 });
 

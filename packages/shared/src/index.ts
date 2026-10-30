@@ -151,6 +151,15 @@ export interface FadeState {
   vwapBroken: boolean;
 }
 
+/** A short-side signal on the bar that produced it; kept for the chart even when it didn't alert. */
+export interface FadeSignal {
+  type: AlertType;
+  /** Start of the 1-minute bar. */
+  barTime: EpochMs;
+  price: number;
+  detail: string;
+}
+
 // ── Trading halts ──
 
 export type HaltState = 'halted' | 'quoting' | 'resumed';

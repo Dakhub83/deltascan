@@ -19,12 +19,12 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { AlertType, Bar, FadeState } from '@deltascan/shared';
+import type { Alert, AlertType, Bar, FadeState } from '@deltascan/shared';
 import { ChartCandlestick, Link2, Link2Off } from 'lucide-react';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
 import { TIMEFRAMES, aggregate, ema, sessionVwap, timeframeLabel, upsertBar, type Timeframe } from '../lib/chartData';
-import { fadeLevels, signalMarks, stageAdvice, type LevelKind } from '../lib/fadeSignals';
+import { fadeLevels, signalMarks, signalsAsAlerts, stageAdvice, type LevelKind } from '../lib/fadeSignals';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
 import { requestLayoutSave } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
@@ -71,6 +71,9 @@ const MARK_STYLE: Partial<Record<AlertType, { color: string; text: string }>> = 
   failed_bounce: { color: '#f472b6', text: 'LH' },
   vwap_bounce: { color: '#a78bfa', text: 'VWAP BNC' },
 };
+
+const SIGNAL_HISTORY_REFRESH_MS = 30_000;
+const BARS_RETRY_MS = 3_000;
 
 const toTime = (ms: number) => (ms / 1000) as UTCTimestamp;
 const etFmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', ...opts });
@@ -160,6 +163,8 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
   const hovering = useRef(false);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const levelLines = useRef<IPriceLine[]>([]);
+  /** Signals from the server's history (startup replay included), for the current symbol. */
+  const pastSignals = useRef<Alert[]>([]);
   const [fade, setFade] = useState<FadeState | null>(null);
   const starterPct = useUiStore((s) => s.settings.shortLimits.starterPct);
   // Read by `render`, which the long-lived live-bar callback also calls.
@@ -219,7 +224,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
     if (!markers.current) return;
     const times = shown.current.bars.map((b) => b.timestamp);
     const marks: SeriesMarker<Time>[] = sym
-      ? signalMarks(marketData.alerts, sym, times).map((m) => {
+      ? signalMarks([...marketData.alerts, ...pastSignals.current], sym, times).map((m) => {
           const st = MARK_STYLE[m.type]!;
           return { time: toTime(m.barTime), position: 'aboveBar', shape: 'arrowDown', color: st.color, text: st.text };
         })
@@ -291,27 +296,50 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
       upsertBar(minuteBars.current, bar);
       if (loaded) render(false);
     });
-    marketData
-      .fetchBars(symbol)
-      .then((history) => {
-        if (cancelled) return;
-        const lastHistoric = history[history.length - 1]?.timestamp ?? -Infinity;
-        minuteBars.current = [...history, ...minuteBars.current.filter((b) => b.timestamp > lastHistoric)];
-        loaded = true;
-        setStatus(minuteBars.current.length ? 'ready' : 'empty');
-        render(true);
-      })
-      .catch(() => !cancelled && setStatus('error'));
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = () =>
+      marketData
+        .fetchBars(symbol)
+        .then((history) => {
+          if (cancelled) return;
+          const lastHistoric = history[history.length - 1]?.timestamp ?? -Infinity;
+          minuteBars.current = [...history, ...minuteBars.current.filter((b) => b.timestamp > lastHistoric)];
+          loaded = true;
+          setStatus(minuteBars.current.length ? 'ready' : 'empty');
+          render(true);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setStatus('error');
+          retry = setTimeout(load, BARS_RETRY_MS);
+        });
+    load();
     return () => {
       cancelled = true;
+      clearTimeout(retry);
       off();
     };
   }, [symbol]);
 
-  // The setup stage comes with the symbol's snapshot; new signals arrive on the alert feed.
+  // The setup stage comes with the symbol's snapshot; new signals arrive on the alert feed, and
+  // the server's history fills in what fired before this page loaded (or during startup replay).
   useEffect(() => {
     setFade(symbol ? (marketData.rows.get(symbol)?.fade ?? null) : null);
+    pastSignals.current = [];
     if (!symbol) return;
+    let cancelled = false;
+    const loadHistory = () =>
+      marketData
+        .fetchSignals(symbol)
+        .then((list) => {
+          if (cancelled) return;
+          pastSignals.current = signalsAsAlerts(symbol, list);
+          drawSignals();
+        })
+        .catch(() => {});
+    loadHistory();
+    // Cooldowns can keep a signal off the alert feed; the history still has it.
+    const historyTimer = setInterval(loadHistory, SIGNAL_HISTORY_REFRESH_MS);
     const offRows = marketData.onRows((changed, reset) => {
       const row = reset ? marketData.rows.get(symbol) : changed.find((r) => r.symbol === symbol);
       if (row || reset) setFade(row?.fade ?? null);
@@ -320,6 +348,8 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
       if (reset || added.some((a) => a.symbol === symbol)) drawSignals();
     });
     return () => {
+      cancelled = true;
+      clearInterval(historyTimer);
       offRows();
       offAlerts();
     };
@@ -469,7 +499,7 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
                 {status === 'idle' && 'Select a symbol in any scanner, or type one above.'}
                 {status === 'loading' && `Loading ${symbol}…`}
                 {status === 'empty' && `No bars for ${symbol} yet.`}
-                {status === 'error' && `Couldn't load ${symbol}. Is the server running?`}
+                {status === 'error' && `Couldn't load ${symbol}. Retrying… (is the server running?)`}
               </span>
             </div>
           </div>

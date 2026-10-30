@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Alert, FadeState } from '@deltascan/shared';
-import { fadeLevels, signalMarks, stageAdvice } from './fadeSignals';
+import { fadeLevels, signalMarks, signalsAsAlerts, stageAdvice } from './fadeSignals';
 
 const T = Date.parse('2026-10-29T14:00:00Z');
 const MIN = 60_000;
@@ -68,6 +68,21 @@ describe('signalMarks', () => {
     const fiveMin = [T, T + 5 * MIN];
     expect(signalMarks([alert('topping', 8), alert('topping', 7), alert('topping', 3, 'OTHER'), alert('vwap_bounce', 0)], 'RUN', fiveMin)).toEqual([
       { barTime: T + 5 * MIN, type: 'topping', price: 2.5 },
+    ]);
+  });
+});
+
+describe('signalsAsAlerts', () => {
+  it('places history on its bar and merges with the live alert for the same signal', () => {
+    const history = signalsAsAlerts('RUN', [
+      { type: 'topping', barTime: T + 2 * MIN, price: 2.58, detail: 'replayed' },
+      { type: 'vwap_break', barTime: T + 4 * MIN, price: 2.2, detail: 'replayed' },
+    ]);
+    const bars = [0, 1, 2, 3, 4, 5].map((m) => T + m * MIN);
+    // The live alert for the topping arrived too: still one mark.
+    expect(signalMarks([alert('topping', 3), ...history], 'RUN', bars)).toEqual([
+      { barTime: T + 2 * MIN, type: 'topping', price: 2.5 },
+      { barTime: T + 4 * MIN, type: 'vwap_break', price: 2.2 },
     ]);
   });
 });

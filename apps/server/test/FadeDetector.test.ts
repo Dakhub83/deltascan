@@ -194,6 +194,58 @@ describe('FadeDetector', () => {
     // The bars are an hour old by NOW: the stage is restored, but nothing fires.
     expect(d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT, CONFIRM]), NOW)?.stage).toBe('confirmation');
     expect(alerts).toEqual([]);
+    // …but the chart still gets the signals, on the bars that produced them.
+    expect(d.signals('RUN').map((s) => [s.type, s.barTime - T0])).toEqual([
+      ['topping', 2 * 60_000],
+      ['rejection_confirmed', 3 * 60_000],
+    ]);
+  });
+
+  describe('gap and fail', () => {
+    // prevClose 2.00; early in the day VWAP sits near the price, so the gap never "extends".
+    const OPEN: [number, number, number, number] = [2.6, 2.62, 2.55, 2.58]; // +30% gap
+    const LOSE_OPEN: [number, number, number, number] = [2.58, 2.58, 2.52, 2.53]; // red, under the 2.60 open and the 2.55 prior low; not at the high
+
+    it('tops straight from the spike when a big gap closes back under its open', () => {
+      const details: string[] = [];
+      const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+      // VWAP 2.50: losing the open here doesn't lose VWAP yet (when it does, VWAP BRK fires on the same bar).
+      expect(d.evaluate(snap({ vwap: 2.5 }), bars([OPEN]), NOW)?.stage).toBe('spike');
+      const state = d.evaluate(snap({ vwap: 2.5 }), bars([OPEN, LOSE_OPEN]), NOW);
+      expect(state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.62, rejectionLow: 2.52 });
+      expect(details).toEqual(['topping: Gap failing: gapped +30% to 2.60, red bar closed 2.53 under the open · starter: risk over 2.62, confirms under 2.52']);
+    });
+
+    it('a gap that collapses in one bar goes straight to fade and alerts the VWAP break', () => {
+      const flush: [number, number, number, number] = [2.58, 2.58, 2.2, 2.21]; // 16% off the high: too late for a starter
+      const r = run([OPEN, flush], { vwap: 2.58 });
+      expect(r.state).toMatchObject({ stage: 'fade', vwapBroken: true });
+      expect(r.alerts).toEqual(['vwap_break']);
+    });
+
+    it('counts a gap that fails inside its first minute as a spike', () => {
+      // Opened +20% and closed +10%: measured at the close alone it was never a spike.
+      const r = run([[2.4, 2.4, 2.15, 2.2]], { vwap: 2.1 });
+      expect(r.state?.stage).toBe('rejection'); // and the candle itself is a reversal off the high
+      expect(r.alerts).toEqual(['topping']);
+    });
+  });
+
+  it('re-checks the bar that cancels a top: a new high that reverses is the next top', () => {
+    // REJECT tops at 2.72; this bar takes it out to 2.80 and closes at its low.
+    const r = run([SPIKE, EXTEND, REJECT, [2.58, 2.8, 2.55, 2.56]]);
+    expect(r.state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.8, rejectionLow: 2.55 });
+    expect(r.alerts).toEqual(['topping', 'topping']);
+  });
+
+  it("skips a previous day's bars before the overnight gap", () => {
+    // Yesterday ran 2.00 → 2.72 (that's today's prevClose territory, not a spike today)…
+    const yesterday = bars([SPIKE, EXTEND, REJECT, CONFIRM]).slice(0, -1).map((b) => ({ ...b, timestamp: b.timestamp - 16 * 60 * 60_000 }));
+    // …today it opened flat at 2.02.
+    const today = bars([[2.0, 2.05, 1.98, 2.02], [2.02, 2.04, 2.0, 2.01]]);
+    const d = new FadeDetector(() => {}, { alertMaxAgeMs: Infinity });
+    expect(d.evaluate(snap(), [...yesterday, ...today], NOW)).toBeNull();
+    expect(d.signals('RUN')).toEqual([]);
   });
 
   it('starts over when the session changes (pre-market → regular)', () => {

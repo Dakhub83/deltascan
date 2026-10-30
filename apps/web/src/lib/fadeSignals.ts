@@ -1,4 +1,4 @@
-import type { Alert, AlertType, FadeState } from '@deltascan/shared';
+import type { Alert, AlertType, FadeSignal, FadeState } from '@deltascan/shared';
 
 export type LevelKind = 'hod' | 'risk' | 'trigger' | 'confirmed' | 'lowerHigh';
 
@@ -78,6 +78,22 @@ export function signalMarks(alerts: readonly Alert[], symbol: string, barTimes: 
     out.push({ barTime, type: a.type, price: a.price });
   }
   return out.sort((x, y) => x.barTime - y.barTime);
+}
+
+/**
+ * Server-side signal history as alerts, so `signalMarks` places both the same way (an alert
+ * lands a minute after its bar starts). Duplicates of live alerts collapse in `signalMarks`.
+ */
+export function signalsAsAlerts(symbol: string, signals: readonly FadeSignal[]): Alert[] {
+  return signals.map((s) => ({
+    id: `hist-${s.type}-${s.barTime}`,
+    type: s.type,
+    symbol,
+    price: s.price,
+    detail: s.detail,
+    changePct: null,
+    timestamp: s.barTime + 60_000,
+  }));
 }
 
 function lastAtOrBefore(sorted: readonly number[], t: number): number {

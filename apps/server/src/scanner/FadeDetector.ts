@@ -1,4 +1,4 @@
-import type { AlertType, Bar, FadeStage, FadeState, SymbolSnapshot, TradeSession } from '@deltascan/shared';
+import type { AlertType, Bar, FadeSignal, FadeStage, FadeState, SymbolSnapshot, TradeSession } from '@deltascan/shared';
 
 export interface FadeOptions {
   /** Up at least this much on prevClose (at the bar's close) to be a spike. */
@@ -44,6 +44,8 @@ export interface FadeOptions {
   minPrice?: number;
   /** Bars older than this are replayed silently (startup backfill), without alerts. */
   alertMaxAgeMs?: number;
+  /** Signals kept per symbol for the chart, replayed ones included. */
+  maxSignals?: number;
 }
 
 export type FadeAlert = (type: AlertType, symbol: string, price: number, detail: string) => void;
@@ -56,6 +58,8 @@ interface SymbolState {
   high: number;
   highAt: number;
   barsSinceHigh: number;
+  /** The session's first bar open: a gapper that closes back under it is failing. */
+  sessionOpen: number | null;
   rejection: { high: number; low: number } | null;
   confirmLevel: number | null;
   /** Backside tracking: the low of the current leg down, and the high of the bounce off it. */
@@ -75,6 +79,7 @@ const fresh = (): SymbolState => ({
   high: -Infinity,
   highAt: 0,
   barsSinceHigh: 0,
+  sessionOpen: null,
   rejection: null,
   confirmLevel: null,
   swingLow: null,
@@ -83,6 +88,9 @@ const fresh = (): SymbolState => ({
   lowerHigh: null,
   prev: null,
 });
+
+/** A gap this long between bars is the overnight break. */
+const OVERNIGHT_GAP_MS = 4 * 60 * 60_000;
 
 const fmt = (n: number) => n.toFixed(n < 1 ? 4 : 2);
 
@@ -96,6 +104,8 @@ const fmt = (n: number) => n.toFixed(n < 1 ? 4 : 2);
 export class FadeDetector {
   private readonly o: Required<Omit<FadeOptions, 'alertMaxAgeMs'>> & { alertMaxAgeMs: number };
   private readonly states = new Map<string, SymbolState>();
+  /** Outlives SymbolState, which resets each session. */
+  private readonly history = new Map<string, FadeSignal[]>();
 
   constructor(
     private readonly onAlert: FadeAlert,
@@ -119,8 +129,14 @@ export class FadeDetector {
       maxBounceOffHighPct: 35,
       minPrice: 1,
       alertMaxAgeMs: 3 * 60_000,
+      maxSignals: 100,
       ...opts,
     };
+  }
+
+  /** Every signal found for the symbol, oldest first, including ones replayed without alerting. */
+  signals(symbol: string): FadeSignal[] {
+    return this.history.get(symbol) ?? [];
   }
 
   /** Processes any newly completed bars; returns the symbol's current state. */
@@ -131,8 +147,19 @@ export class FadeDetector {
     }
     let st = this.states.get(snap.symbol);
     if (!st) this.states.set(snap.symbol, (st = fresh()));
-    // The last bar is still forming.
-    for (let i = 0; i < bars.length - 1; i++) {
+    // The last bar is still forming. Bars before the overnight gap are a previous day: measured
+    // against today's prevClose they'd make up spikes and gaps, so they're skipped.
+    const last = bars.length - 1;
+    let start = 0;
+    if (last > 0 && bars[last - 1]!.timestamp > st.lastTs) {
+      for (let i = last - 1; i > 0; i--) {
+        if (bars[i]!.timestamp - bars[i - 1]!.timestamp >= OVERNIGHT_GAP_MS) {
+          start = i;
+          break;
+        }
+      }
+    }
+    for (let i = start; i < last; i++) {
       const b = bars[i]!;
       if (b.timestamp <= st.lastTs) continue;
       st = this.step(st, b, snap, now - b.timestamp <= this.o.alertMaxAgeMs);
@@ -158,6 +185,57 @@ export class FadeDetector {
   private eligible(s: Readonly<SymbolSnapshot>): boolean {
     if (s.last !== null && s.last < this.o.minPrice) return false;
     return true;
+  }
+
+  /**
+   * Topping patterns, from Spike or Extension: a topping tail, a reversal candle, a stall under the
+   * high, or (regular hours) a gap of spikeMinPct+ closing back under its opening price.
+   */
+  private checkTop(
+    st: SymbolState,
+    b: Bar,
+    snap: Readonly<SymbolSnapshot>,
+    session: TradeSession,
+    newHigh: boolean,
+    offHigh: number,
+    enter: (stage: FadeStage) => void,
+    alert: (type: AlertType, detail: string) => void,
+  ) {
+    const o = this.o;
+    const range = b.high - b.low;
+    const wick = b.high - Math.max(b.open, b.close);
+    const red = b.close < b.open;
+    const atHigh = range > 0 && red && b.high >= st.high * (1 - o.nearHigh);
+    const toppingTail = atHigh && wick / range >= o.rejectionWick;
+    const reversal = atHigh && (b.close - b.low) / range <= o.reversalClosePos && (range / b.high) * 100 >= o.reversalMinRangePct;
+    const stalled =
+      st.barsSinceHigh >= o.stallBars && red && st.prev !== null && st.prev.high >= st.high * (1 - o.stallNearHigh) && b.close < st.prev.low;
+    const gapPct = snap.prevClose && st.sessionOpen !== null ? (st.sessionOpen / snap.prevClose - 1) * 100 : 0;
+    const gapFail =
+      session === 'regular' &&
+      gapPct >= o.spikeMinPct &&
+      red &&
+      !newHigh &&
+      st.prev !== null &&
+      b.close < st.sessionOpen! &&
+      b.close < st.prev.low;
+
+    // A top called this far off the high would be a late starter: the else branch fades it silently.
+    if ((toppingTail || reversal || stalled || gapFail) && offHigh < o.maxConfirmOffHighPct) {
+      st.rejection = toppingTail || reversal ? { high: b.high, low: b.low } : { high: st.high, low: b.low };
+      enter('rejection');
+      const r = st.rejection;
+      const why = toppingTail
+        ? `Topping tail at ${fmt(r.high)} (${Math.round((wick / range) * 100)}% wick)`
+        : reversal
+          ? `Reversal candle off ${fmt(r.high)}: ${((range / b.high) * 100).toFixed(1)}% range, closed ${fmt(b.close)} near the low`
+          : gapFail
+            ? `Gap failing: gapped +${gapPct.toFixed(0)}% to ${fmt(st.sessionOpen!)}, red bar closed ${fmt(b.close)} under the open`
+            : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
+      alert('topping', `${why} · starter: risk over ${fmt(r.high)}, confirms under ${fmt(r.low)}`);
+    } else if (offHigh >= o.maxConfirmOffHighPct) {
+      enter('fade'); // topped without a clean rejection; too late to call one now
+    }
   }
 
   /** A bounce off the backside low that makes a lower high, then a red bar breaking the prior low. */
@@ -190,6 +268,7 @@ export class FadeDetector {
     const o = this.o;
     const session = b.session ?? 'regular';
     if (st.session !== session) st = { ...fresh(), session, lastTs: st.lastTs };
+    st.sessionOpen ??= b.open;
 
     const newHigh = b.high > st.high;
     if (newHigh) {
@@ -213,53 +292,39 @@ export class FadeDetector {
         st.vwapBroken = false;
       }
     };
-    const alert = (type: AlertType, detail: string) => live && this.onAlert(type, snap.symbol, b.close, detail);
+    const alert = (type: AlertType, detail: string) => {
+      let list = this.history.get(snap.symbol);
+      if (!list) this.history.set(snap.symbol, (list = []));
+      list.push({ type, barTime: b.timestamp, price: b.close, detail });
+      if (list.length > o.maxSignals) list.shift();
+      if (live) this.onAlert(type, snap.symbol, b.close, detail);
+    };
 
     if (st.stage === 'confirmation' || st.stage === 'fade' || st.stage === 'vwap-bounce') this.trackBounce(st, b, offHigh, alert);
 
+    // Measured at the bar's high, so a gap that fails inside its first minute still counts as a spike.
+    const highChg = snap.prevClose ? (b.high / snap.prevClose - 1) * 100 : 0;
+    if (st.stage === null && Math.max(chg, highChg) >= o.spikeMinPct) enter('spike');
+
     switch (st.stage) {
       case null:
-        if (chg >= o.spikeMinPct) enter('spike');
         break;
 
       case 'spike':
         if (newHigh && (vwap === null || b.close >= vwap * (1 + o.extensionVwapPct / 100))) enter('extension');
+        // A gap-and-fail never extends: it can top straight from the spike.
+        else this.checkTop(st, b, snap, session, newHigh, offHigh, enter, alert);
         break;
 
-      case 'extension': {
-        const range = b.high - b.low;
-        const wick = b.high - Math.max(b.open, b.close);
-        const atHigh = range > 0 && b.close < b.open && b.high >= st.high * (1 - o.nearHigh);
-        const toppingTail = atHigh && wick / range >= o.rejectionWick;
-        const reversal =
-          atHigh && (b.close - b.low) / range <= o.reversalClosePos && (range / b.high) * 100 >= o.reversalMinRangePct;
-        const stalled =
-          st.barsSinceHigh >= o.stallBars &&
-          b.close < b.open &&
-          st.prev !== null &&
-          st.prev.high >= st.high * (1 - o.stallNearHigh) &&
-          b.close < st.prev.low;
-        // A top called this far off the high would be a late starter: the else branch fades it silently.
-        if ((toppingTail || reversal || stalled) && offHigh < o.maxConfirmOffHighPct) {
-          st.rejection = toppingTail || reversal ? { high: b.high, low: b.low } : { high: st.high, low: b.low };
-          enter('rejection');
-          const r = st.rejection;
-          const why = toppingTail
-            ? `Topping tail at ${fmt(r.high)} (${Math.round((wick / range) * 100)}% wick)`
-            : reversal
-              ? `Reversal candle off ${fmt(r.high)}: ${((range / b.high) * 100).toFixed(1)}% range, closed ${fmt(b.close)} near the low`
-              : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
-          alert('topping', `${why} · starter: risk over ${fmt(r.high)}, confirms under ${fmt(r.low)}`);
-        } else if (offHigh >= o.maxConfirmOffHighPct) {
-          enter('fade'); // topped without a clean rejection; too late to call one now
-        }
+      case 'extension':
+        this.checkTop(st, b, snap, session, newHigh, offHigh, enter, alert);
         break;
-      }
 
       case 'rejection':
         if (b.high > st.rejection!.high) {
           st.rejection = null;
           enter('extension');
+          this.checkTop(st, b, snap, session, newHigh, offHigh, enter, alert); // the new high itself may reverse
         } else if (b.close < st.rejection!.low) {
           st.confirmLevel = st.rejection!.low;
           if (offHigh >= o.maxConfirmOffHighPct) {
@@ -276,6 +341,7 @@ export class FadeDetector {
           st.rejection = null;
           st.confirmLevel = null;
           enter('extension');
+          this.checkTop(st, b, snap, session, newHigh, offHigh, enter, alert); // the new high itself may reverse
         } else if (offHigh >= o.fadeOffHighPct || (vwap !== null && b.close < vwap)) {
           enter('fade');
         }
@@ -286,6 +352,7 @@ export class FadeDetector {
           st.rejection = null;
           st.confirmLevel = null;
           enter('extension');
+          this.checkTop(st, b, snap, session, newHigh, offHigh, enter, alert); // the new high itself may reverse
         } else if (st.vwapBroken && vwap !== null && b.close < vwap && b.high >= vwap * (1 - o.vwapTouch)) {
           // Already under VWAP before this bar: a candle that opens over it and closes under is the break, not a bounce.
           enter('vwap-bounce');

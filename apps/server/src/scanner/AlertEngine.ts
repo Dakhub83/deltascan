@@ -30,11 +30,13 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   block_trade: 0,
   halt: 0,
   resume: 0,
-  topping: 5 * 60_000,
-  rejection_confirmed: 5 * 60_000,
-  failed_bounce: 3 * 60_000,
-  vwap_break: 5 * 60_000,
-  vwap_bounce: 5 * 60_000,
+  // FadeDetector fires these only on a stage change, so a short cooldown is enough; a long one
+  // would hide a second top that comes minutes after a new high cancelled the first.
+  topping: 60_000,
+  rejection_confirmed: 60_000,
+  failed_bounce: 60_000,
+  vwap_break: 60_000,
+  vwap_bounce: 60_000,
 };
 
 const REGULAR_SESSION_MINUTES = 390;

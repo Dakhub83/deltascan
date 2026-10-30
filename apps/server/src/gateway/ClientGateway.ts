@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { Bar, ClientMessage, CompanyProfile, DilutionReport, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Bar, ClientMessage, CompanyProfile, DilutionReport, FadeSignal, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
@@ -19,6 +19,8 @@ export interface ClientGatewayOptions {
   dilution?: (symbol: string) => Promise<DilutionReport | null>;
   /** Undefined when neither SEC nor Alpaca news is configured. */
   profile?: (symbol: string) => Promise<CompanyProfile | null>;
+  /** Short-side signals for the chart, including ones replayed at startup without alerting. */
+  fadeSignals?: (symbol: string) => FadeSignal[];
   logger: Logger;
 }
 
@@ -69,6 +71,12 @@ export class ClientGateway {
         const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(opts.store.getBars(symbol)));
+        return;
+      }
+      if (url.pathname === '/api/signals') {
+        const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(opts.fadeSignals?.(symbol) ?? []));
         return;
       }
       res.writeHead(404).end();
