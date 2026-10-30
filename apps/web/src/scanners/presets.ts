@@ -1,6 +1,5 @@
 import type { SymbolSnapshot } from '@deltascan/shared';
 import { ArrowDownRight, ArrowUpFromLine, ChevronsUp, CircleDollarSign, Flame, Gauge, List, Moon, Rocket, Sun, Sunrise, Target, TrendingDown, TrendingUp, Undo2, Waves, Zap, type LucideIcon } from 'lucide-react';
-import { FADE, passesFloors } from './fade';
 import { derived, type ColumnId } from './columns';
 
 export interface ScannerPreset {
@@ -50,9 +49,9 @@ export const PRESETS: ScannerPreset[] = [
   {
     id: 'fade-setups',
     title: 'Fade Setups',
-    description: `Runners past the spike, ranked by setup stage · price ≥ $${FADE.minPrice}, any float`,
+    description: 'Runners past the spike, ranked by setup stage · any price, any float (use $ Price / Float to narrow)',
     icon: ArrowDownRight,
-    filter: (s) => s.fade !== null && s.fade.stage !== 'spike' && passesFloors(s),
+    filter: (s) => s.fade !== null && s.fade.stage !== 'spike',
     // Confirmed rejections first: those are the ones you can act on.
     sort: { colId: 'fadeStage', sort: 'asc' },
     columns: ['symbol', 'fadeStage', 'last', 'changePct', 'offHighPct', 'sinceHighMin', 'vwapDistPct', 'floatShares', 'rvol', 'tier'],
@@ -64,7 +63,7 @@ export const PRESETS: ScannerPreset[] = [
     description: 'Broken runners below VWAP, closest to it first: bounce-into-VWAP shorts',
     icon: Undo2,
     filter: (s) =>
-      (s.fade?.stage === 'fade' || s.fade?.stage === 'vwap-bounce') && s.vwap != null && s.last != null && s.last < s.vwap && passesFloors(s),
+      (s.fade?.stage === 'fade' || s.fade?.stage === 'vwap-bounce') && s.vwap != null && s.last != null && s.last < s.vwap,
     sort: { colId: 'vwapDistPct', sort: 'desc' },
     columns: ['symbol', 'fadeStage', 'last', 'vwapDistPct', 'vwap', 'offHighPct', 'changePct', 'sinceHighMin', 'floatShares'],
     emptyText: 'No broken runner is trading under VWAP right now.',

@@ -35,8 +35,10 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   topping: 60_000,
   rejection_confirmed: 60_000,
   failed_bounce: 60_000,
+  vwap_test: 60_000,
   vwap_break: 60_000,
   vwap_bounce: 60_000,
+  backside: 60_000,
 };
 
 const REGULAR_SESSION_MINUTES = 390;

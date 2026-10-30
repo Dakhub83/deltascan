@@ -131,7 +131,99 @@ describe('FadeDetector', () => {
     const bounce: [number, number, number, number] = [2.22, 2.29, 2.2, 2.26]; // high within 1.5% of 2.30, closes under
     const r = run([SPIKE, EXTEND, REJECT, CONFIRM, lose, bounce]);
     expect(r.state?.stage).toBe('vwap-bounce');
-    expect(r.alerts).toEqual(['topping', 'rejection_confirmed', 'vwap_break', 'vwap_bounce']);
+    expect(r.alerts).toEqual(['topping', 'rejection_confirmed', 'vwap_break', 'backside', 'vwap_bounce']);
+  });
+
+  describe('fading into VWAP (anticipating the break)', () => {
+    // VWAP 2.40 here, so the confirmed top (CONFIRM closes 2.50) is still over it.
+    const NEAR: [number, number, number, number] = [2.5, 2.5, 2.43, 2.44]; // red, under the 2.45 prior low, 1.7% over VWAP
+
+    it('warns once a topped stock weakens to within 2% of VWAP, before it breaks', () => {
+      const details: string[] = [];
+      const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+      const state = d.evaluate(snap({ vwap: 2.4 }), bars([SPIKE, EXTEND, REJECT, CONFIRM, NEAR]), NOW);
+      expect(state).toMatchObject({ vwapTest: true, vwapBroken: false });
+      expect(details.at(-1)).toBe('vwap_test: Fading into VWAP: closed 2.44, 1.7% over VWAP 2.40, 10.3% off the 2.72 high · anticipate the break: risk over 2.72');
+    });
+
+    it('warns once per approach: not again while it hovers, again after pulling away', () => {
+      const hover: [number, number, number, number] = [2.44, 2.45, 2.42, 2.425];
+      const away: [number, number, number, number] = [2.425, 2.6, 2.5, 2.58]; // 7.5% over VWAP: re-armed
+      const back: [number, number, number, number] = [2.58, 2.58, 2.43, 2.44];
+      const once = run([SPIKE, EXTEND, REJECT, CONFIRM, NEAR, hover], { vwap: 2.4 });
+      expect(once.alerts.filter((a) => a === 'vwap_test')).toHaveLength(1);
+      const twice = run([SPIKE, EXTEND, REJECT, CONFIRM, NEAR, hover, away, back], { vwap: 2.4 });
+      expect(twice.alerts.filter((a) => a === 'vwap_test')).toHaveLength(2);
+    });
+
+    it('clears when the break happens, and needs weakness and a topped stock', () => {
+      const broke = run([SPIKE, EXTEND, REJECT, CONFIRM, NEAR, [2.44, 2.44, 2.3, 2.32]], { vwap: 2.4 });
+      expect(broke.state).toMatchObject({ vwapTest: false, vwapBroken: true });
+      expect(broke.alerts.slice(-3)).toEqual(['vwap_test', 'vwap_break', 'backside']);
+      // Green near VWAP: no weakness.
+      expect(run([SPIKE, EXTEND, REJECT, CONFIRM, [2.42, 2.46, 2.41, 2.45]], { vwap: 2.4 }).alerts).not.toContain('vwap_test');
+      // Never topped: a spike hovering over VWAP isn't a fade.
+      expect(run([SPIKE, [2.35, 2.36, 2.3, 2.31]], { vwap: 2.28 }).alerts).not.toContain('vwap_test');
+    });
+  });
+
+  describe('backside', () => {
+    const LOSE: [number, number, number, number] = [2.5, 2.5, 2.2, 2.22]; // red, under VWAP 2.30
+
+    it('fires once the confirmed top closes red under VWAP, with the stop over the top', () => {
+      const details: string[] = [];
+      const d = new FadeDetector((type, _s, _p, detail) => details.push(`${type}: ${detail}`), { alertMaxAgeMs: Infinity });
+      const state = d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT, CONFIRM, LOSE, [2.22, 2.24, 2.1, 2.12]]), NOW);
+      expect(state).toMatchObject({ backsideStop: 2.72 });
+      expect(details.filter((x) => x.startsWith('backside'))).toEqual([
+        'backside: Backside: topped at 2.72, top confirmed under 2.55, closed 2.22 under VWAP 2.30 · short: risk over 2.72',
+      ]);
+    });
+
+    it('uses the lower high as the stop when the failure is a failed bounce', () => {
+      // Straight to fade with no confirmation (VWAP 2.00), a failed bounce, then a red close under VWAP.
+      const flush: [number, number, number, number] = [2.65, 2.65, 2.24, 2.25];
+      const leg: [number, number, number, number] = [2.25, 2.26, 2.15, 2.18]; // the low the bounce starts from
+      const bounce: [number, number, number, number] = [2.18, 2.4, 2.18, 2.38];
+      const roll: [number, number, number, number] = [2.38, 2.38, 2.16, 2.17]; // red, under the bounce bar's low
+      const under: [number, number, number, number] = [2.17, 2.17, 1.9, 1.95];
+      const r = run([SPIKE, EXTEND, flush, leg, bounce, roll, under], { vwap: 2.0 });
+      expect(r.alerts).toEqual(['failed_bounce', 'vwap_break', 'backside']);
+      expect(r.state).toMatchObject({ lowerHigh: 2.4, backsideStop: 2.4 });
+    });
+
+    it("doesn't fire before the failure is proven, on a green bar, or twice", () => {
+      // Collapses under VWAP with no confirmation and no lower high yet: only the VWAP break.
+      expect(run([SPIKE, EXTEND, [2.65, 2.65, 2.2, 2.21]], { vwap: 2.3 }).alerts).not.toContain('backside');
+      // Confirmed, but the first bar under VWAP is green.
+      const greenUnder: [number, number, number, number] = [2.2, 2.28, 2.18, 2.26];
+      expect(run([SPIKE, EXTEND, REJECT, CONFIRM, greenUnder]).alerts).not.toContain('backside');
+      const many = run([SPIKE, EXTEND, REJECT, CONFIRM, LOSE, [2.22, 2.22, 2.1, 2.11], [2.11, 2.11, 2.0, 2.01]]);
+      expect(many.alerts.filter((a) => a === 'backside')).toHaveLength(1);
+    });
+
+    it('needs a real move off the high, not a wiggle at the open where VWAP sits on the price', () => {
+      // Topped at 10.00, confirmed, and a red close under VWAP 9.95, but under 1% off the high.
+      const tiny: [number, number, number, number][] = [
+        [9.9, 10.0, 9.9, 9.99],
+        [9.99, 10.0, 9.96, 9.97],
+        [9.97, 9.98, 9.95, 9.96],
+        [9.96, 9.97, 9.93, 9.94], // stalls under the high and breaks the prior low: a top
+        [9.94, 9.94, 9.9, 9.91], // closes under the top bar's low: confirmed, under VWAP, red, 0.9% off the high
+      ];
+      const d = new FadeDetector(() => {}, { alertMaxAgeMs: Infinity, stallBars: 1 });
+      d.evaluate(snap({ prevClose: 8, vwap: 9.95 }), bars(tiny), NOW);
+      expect(d.signals('RUN').map((s) => s.type)).not.toContain('backside');
+      // Without the minimum, the same wiggle passes every other check.
+      const loose = new FadeDetector(() => {}, { alertMaxAgeMs: Infinity, stallBars: 1, backsideMinOffHighPct: 0 });
+      loose.evaluate(snap({ prevClose: 8, vwap: 9.95 }), bars(tiny), NOW);
+      expect(loose.signals('RUN').map((s) => s.type)).toContain('backside');
+    });
+
+    it('a new high starts a new setup', () => {
+      const r = run([SPIKE, EXTEND, REJECT, CONFIRM, LOSE, [2.22, 2.9, 2.22, 2.88]]);
+      expect(r.state).toMatchObject({ stage: 'extension', backsideStop: null });
+    });
   });
 
   it('alerts vwap_break once on the first close under VWAP after the top', () => {
@@ -181,8 +273,10 @@ describe('FadeDetector', () => {
     expect(broke.alerts.filter((a) => a === 'vwap_break')).toHaveLength(2);
   });
 
-  it('ignores sub-$1 names but tracks any float', () => {
-    expect(run([SPIKE, EXTEND], { last: 0.6 }).state).toBeNull();
+  it('tracks every stock, whatever its price or float', () => {
+    const sub = (k: number): [number, number, number, number] => [SPIKE, EXTEND][k]!.map((v) => v / 4) as [number, number, number, number];
+    // The same setup at a quarter of the price: a sub-$1 runner off a 0.50 prior close.
+    expect(run([sub(0), sub(1)], { prevClose: 0.5, vwap: 0.575, last: 0.66 }).state?.stage).toBe('extension');
     expect(run([SPIKE, EXTEND], { floatShares: 500_000, last: 2.65 }).state?.stage).toBe('extension');
     expect(run([SPIKE, EXTEND], { floatShares: 800e6, last: 2.65 }).state?.stage).toBe('extension');
     expect(run([SPIKE, EXTEND], { floatShares: 10e6, last: 2.65 }).state?.stage).toBe('extension');
@@ -194,10 +288,13 @@ describe('FadeDetector', () => {
     // The bars are an hour old by NOW: the stage is restored, but nothing fires.
     expect(d.evaluate(snap(), bars([SPIKE, EXTEND, REJECT, CONFIRM]), NOW)?.stage).toBe('confirmation');
     expect(alerts).toEqual([]);
-    // …but the chart still gets the signals, on the bars that produced them.
+    // …but the chart still gets the signals, on the bars that produced them. Replayed, CONFIRM is
+    // judged against VWAP from the bars (≈2.504 by then), so its 2.50 close is also the break.
     expect(d.signals('RUN').map((s) => [s.type, s.barTime - T0])).toEqual([
       ['topping', 2 * 60_000],
       ['rejection_confirmed', 3 * 60_000],
+      ['vwap_break', 3 * 60_000],
+      ['backside', 3 * 60_000],
     ]);
   });
 
@@ -213,7 +310,11 @@ describe('FadeDetector', () => {
       expect(d.evaluate(snap({ vwap: 2.5 }), bars([OPEN]), NOW)?.stage).toBe('spike');
       const state = d.evaluate(snap({ vwap: 2.5 }), bars([OPEN, LOSE_OPEN]), NOW);
       expect(state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.62, rejectionLow: 2.52 });
-      expect(details).toEqual(['topping: Gap failing: gapped +30% to 2.60, red bar closed 2.53 under the open · starter: risk over 2.62, confirms under 2.52']);
+      expect(details).toEqual([
+        'topping: Gap failing: gapped +30% to 2.60, red bar closed 2.53 under the open · starter: risk over 2.62, confirms under 2.52',
+        // 1.2% over VWAP 2.50 and weakening: the break is in reach too.
+        'vwap_test: Fading into VWAP: closed 2.53, 1.2% over VWAP 2.50, 3.4% off the 2.62 high · anticipate the break: risk over 2.62',
+      ]);
     });
 
     it('a gap that collapses in one bar goes straight to fade and alerts the VWAP break', () => {
@@ -236,6 +337,29 @@ describe('FadeDetector', () => {
     const r = run([SPIKE, EXTEND, REJECT, [2.58, 2.8, 2.55, 2.56]]);
     expect(r.state).toMatchObject({ stage: 'rejection', rejectionHigh: 2.8, rejectionLow: 2.55 });
     expect(r.alerts).toEqual(['topping', 'topping']);
+  });
+
+  it('judges replayed bars against VWAP as of that bar, not the current VWAP', () => {
+    // By NOW the stock squeezed and VWAP is 3.00, over every one of these hour-old bars. As of the
+    // REJECT bar, VWAP from the bars was about 2.50, so it closed over it: no break then.
+    const d = new FadeDetector(() => {}, { alertMaxAgeMs: 3 * 60_000 });
+    const state = d.evaluate(snap({ vwap: 3.0 }), bars([SPIKE, EXTEND, REJECT]), NOW);
+    expect(state).toMatchObject({ stage: 'rejection', vwapBroken: false });
+    expect(d.signals('RUN').map((s) => s.type)).toEqual(['topping']);
+  });
+
+  it("uses the snapshot's open for a gap, not the first bar the server happened to see", () => {
+    // Server started mid-morning: the first bar it saw opened at 2.20, but the day opened at 2.60 (+30%).
+    const late: [number, number, number, number][] = [
+      [2.2, 2.3, 2.18, 2.28],
+      [2.28, 2.62, 2.28, 2.6], // back up near the open, a new high for the server
+      [2.58, 2.58, 2.5, 2.52], // red and under the open, but not under the 2.28 prior low
+    ];
+    const lost: [number, number, number, number] = [2.52, 2.54, 2.45, 2.46]; // red, under the open and the 2.50 prior low
+    const r = run([...late, lost], { open: 2.6, vwap: 2.3 });
+    expect(r.state?.stage).toBe('rejection');
+    const firstSeen = run([...late, lost], { open: null, vwap: 2.3 });
+    expect(firstSeen.state?.stage).not.toBe('rejection'); // 2.20 "open" is only +10%: no gap
   });
 
   it("skips a previous day's bars before the overnight gap", () => {

@@ -45,7 +45,7 @@ describe('readTape', () => {
   });
 
   it('reports a confirmed rejection and VWAP position', () => {
-    const fade = { stage: 'confirmation', since: NOW, high: 1.4, highAt: NOW, rejectionHigh: 1.4, rejectionLow: 1.2, confirmLevel: 1.2, lowerHigh: null, vwapBroken: false } as const;
+    const fade = { stage: 'confirmation', since: NOW, high: 1.4, highAt: NOW, rejectionHigh: 1.4, rejectionLow: 1.2, confirmLevel: 1.2, lowerHigh: null, vwapBroken: false, backsideStop: null, vwapTest: false } as const;
     expect(readTape([], snap({ last: 1.1, high: 1.4, chg5mPct: -3, fade }), NOW).status?.text).toBe('▼ REJECTED at $1.40');
     expect(readTape([], snap({ last: 0.8, high: 1.4, chg5mPct: 0 }), NOW).status).toEqual({ tone: 'down', text: 'Below VWAP $0.9000' });
   });

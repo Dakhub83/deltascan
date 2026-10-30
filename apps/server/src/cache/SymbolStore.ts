@@ -140,6 +140,8 @@ export class SymbolStore {
         a.rejectionLow === fade.rejectionLow &&
         a.lowerHigh === fade.lowerHigh &&
         a.vwapBroken === fade.vwapBroken &&
+        a.backsideStop === fade.backsideStop &&
+        a.vwapTest === fade.vwapTest &&
         a.confirmLevel === fade.confirmLevel);
     if (same) return;
     s.fade = fade;

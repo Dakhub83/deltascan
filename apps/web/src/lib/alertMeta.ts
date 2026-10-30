@@ -101,6 +101,14 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     badge: 'bg-down/12 text-down ring-down/25',
     tone: [988, 740, 523],
   },
+  vwap_test: {
+    label: 'Fading into VWAP (anticipate the break)',
+    short: '→ VWAP',
+    icon: ChevronsDown,
+    text: 'text-warn',
+    badge: 'bg-warn/12 text-warn ring-warn/25',
+    tone: [784, 698, 659],
+  },
   vwap_break: {
     label: 'VWAP Break (add the rest)',
     short: 'VWAP BRK',
@@ -116,6 +124,14 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     text: 'text-down',
     badge: 'bg-down/12 text-down ring-down/25',
     tone: [784, 587, 440],
+  },
+  backside: {
+    label: 'Backside: start the short',
+    short: 'SHORT',
+    icon: TrendingDown,
+    text: 'text-down',
+    badge: 'bg-down/30 text-down ring-down/60 font-bold',
+    tone: [1175, 880, 659, 440],
   },
   vwap_bounce: {
     label: 'Backside VWAP Bounce',

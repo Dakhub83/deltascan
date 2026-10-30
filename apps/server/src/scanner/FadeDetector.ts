@@ -38,10 +38,14 @@ export interface FadeOptions {
   /** Past this far off the high, a failed bounce is chasing the back side and doesn't alert. */
   maxBounceOffHighPct?: number;
   /**
-   * Only names at or above this price are tracked, so alerts match what the Fade Setups scanner
-   * shows (keep in sync with FADE in apps/web/src/scanners/fade.ts). Float isn't a filter.
+   * The backside needs a real move off the high: in the first minutes VWAP sits on the price, so
+   * a 0.5% wiggle would otherwise meet every other condition.
    */
-  minPrice?: number;
+  backsideMinOffHighPct?: number;
+  /** Fading into VWAP: a close at most this far above it… */
+  vwapApproachPct?: number;
+  /** …armed again only once price pulls back more than this far above VWAP. */
+  vwapRearmPct?: number;
   /** Bars older than this are replayed silently (startup backfill), without alerts. */
   alertMaxAgeMs?: number;
   /** Signals kept per symbol for the chart, replayed ones included. */
@@ -60,6 +64,9 @@ interface SymbolState {
   barsSinceHigh: number;
   /** The session's first bar open: a gapper that closes back under it is failing. */
   sessionOpen: number | null;
+  /** Regular-session VWAP built from the bars, as the chart draws it, for replayed bars. */
+  pv: number;
+  vol: number;
   rejection: { high: number; low: number } | null;
   confirmLevel: number | null;
   /** Backside tracking: the low of the current leg down, and the high of the bounce off it. */
@@ -68,6 +75,8 @@ interface SymbolState {
   vwapBroken: boolean;
   bounce: { high: number; bars: number } | null;
   lowerHigh: number | null;
+  backsideStop: number | null;
+  vwapTest: boolean;
   prev: Bar | null;
 }
 
@@ -80,12 +89,16 @@ const fresh = (): SymbolState => ({
   highAt: 0,
   barsSinceHigh: 0,
   sessionOpen: null,
+  pv: 0,
+  vol: 0,
   rejection: null,
   confirmLevel: null,
   swingLow: null,
   vwapBroken: false,
   bounce: null,
   lowerHigh: null,
+  backsideStop: null,
+  vwapTest: false,
   prev: null,
 });
 
@@ -98,7 +111,8 @@ const fmt = (n: number) => n.toFixed(n < 1 ? 4 : 2);
  * Tracks each runner through Spike → Extension → Rejection → Confirmation → Fade on completed
  * 1-minute bars (the bar in progress is ignored, so nothing confirms intrabar). Fires `topping`
  * (the starter), `rejection_confirmed`, `vwap_break` (the first close under VWAP after the top: the
- * main add), `failed_bounce` (a lower high rolling over) and `vwap_bounce` alerts. VWAP is the
+ * main add) and `vwap_test` before it (fading into VWAP), `failed_bounce` (a lower high rolling over),
+ * `vwap_bounce` and `backside` alerts. VWAP is the
  * snapshot's current session VWAP.
  */
 export class FadeDetector {
@@ -127,7 +141,9 @@ export class FadeDetector {
       bounceMinPct: 2,
       bounceRollBars: 3,
       maxBounceOffHighPct: 35,
-      minPrice: 1,
+      backsideMinOffHighPct: 3,
+      vwapApproachPct: 2,
+      vwapRearmPct: 4,
       alertMaxAgeMs: 3 * 60_000,
       maxSignals: 100,
       ...opts,
@@ -141,10 +157,7 @@ export class FadeDetector {
 
   /** Processes any newly completed bars; returns the symbol's current state. */
   evaluate(snap: Readonly<SymbolSnapshot>, bars: readonly Bar[], now = Date.now()): FadeState | null {
-    if (!this.eligible(snap)) {
-      this.states.delete(snap.symbol);
-      return null;
-    }
+    // Every stock is tracked, whatever its price or float: the trader filters in the scanner.
     let st = this.states.get(snap.symbol);
     if (!st) this.states.set(snap.symbol, (st = fresh()));
     // The last bar is still forming. Bars before the overnight gap are a previous day: measured
@@ -178,13 +191,10 @@ export class FadeDetector {
           confirmLevel: st.confirmLevel,
           lowerHigh: st.lowerHigh,
           vwapBroken: st.vwapBroken,
+          backsideStop: st.backsideStop,
+          vwapTest: st.vwapTest,
         }
       : null;
-  }
-
-  private eligible(s: Readonly<SymbolSnapshot>): boolean {
-    if (s.last !== null && s.last < this.o.minPrice) return false;
-    return true;
   }
 
   /**
@@ -210,15 +220,12 @@ export class FadeDetector {
     const reversal = atHigh && (b.close - b.low) / range <= o.reversalClosePos && (range / b.high) * 100 >= o.reversalMinRangePct;
     const stalled =
       st.barsSinceHigh >= o.stallBars && red && st.prev !== null && st.prev.high >= st.high * (1 - o.stallNearHigh) && b.close < st.prev.low;
-    const gapPct = snap.prevClose && st.sessionOpen !== null ? (st.sessionOpen / snap.prevClose - 1) * 100 : 0;
+    // The snapshot has the real open; the first bar seen is only a fallback (a server started at
+    // 11:00 would otherwise treat 11:00 as the open).
+    const open = snap.open ?? st.sessionOpen;
+    const gapPct = snap.prevClose && open !== null ? (open / snap.prevClose - 1) * 100 : 0;
     const gapFail =
-      session === 'regular' &&
-      gapPct >= o.spikeMinPct &&
-      red &&
-      !newHigh &&
-      st.prev !== null &&
-      b.close < st.sessionOpen! &&
-      b.close < st.prev.low;
+      session === 'regular' && open !== null && gapPct >= o.spikeMinPct && red && !newHigh && st.prev !== null && b.close < open && b.close < st.prev.low;
 
     // A top called this far off the high would be a late starter: the else branch fades it silently.
     if ((toppingTail || reversal || stalled || gapFail) && offHigh < o.maxConfirmOffHighPct) {
@@ -230,7 +237,7 @@ export class FadeDetector {
         : reversal
           ? `Reversal candle off ${fmt(r.high)}: ${((range / b.high) * 100).toFixed(1)}% range, closed ${fmt(b.close)} near the low`
           : gapFail
-            ? `Gap failing: gapped +${gapPct.toFixed(0)}% to ${fmt(st.sessionOpen!)}, red bar closed ${fmt(b.close)} under the open`
+            ? `Gap failing: gapped +${gapPct.toFixed(0)}% to ${fmt(open!)}, red bar closed ${fmt(b.close)} under the open`
             : `Failed at ${fmt(r.high)} for ${st.barsSinceHigh}m, red bar broke ${fmt(st.prev!.low)}`;
       alert('topping', `${why} · starter: risk over ${fmt(r.high)}, confirms under ${fmt(r.low)}`);
     } else if (offHigh >= o.maxConfirmOffHighPct) {
@@ -279,7 +286,13 @@ export class FadeDetector {
       st.barsSinceHigh++;
     }
 
-    const vwap = session === 'regular' ? snap.vwap : null;
+    if (session === 'regular') {
+      st.pv += ((b.high + b.low + b.close) / 3) * b.volume;
+      st.vol += b.volume;
+    }
+    // The snapshot's VWAP is today's latest: right for a bar that just closed, wrong for a replayed
+    // 9:35 bar, which is judged against VWAP as of that bar instead.
+    const vwap = session !== 'regular' ? null : live || st.vol === 0 ? snap.vwap : st.pv / st.vol;
     const chg = snap.prevClose ? (b.close / snap.prevClose - 1) * 100 : 0;
     const offHigh = (1 - b.close / st.high) * 100;
     const enter = (stage: FadeStage) => {
@@ -290,6 +303,8 @@ export class FadeDetector {
         st.bounce = null;
         st.lowerHigh = null;
         st.vwapBroken = false;
+        st.backsideStop = null;
+        st.vwapTest = false;
       }
     };
     const alert = (type: AlertType, detail: string) => {
@@ -373,14 +388,59 @@ export class FadeDetector {
     }
 
     const topped = st.stage !== null && st.stage !== 'spike' && st.stage !== 'extension';
+    const stop = st.lowerHigh ?? st.rejection?.high ?? st.high;
+
+    // Anticipating the break: topped, still over VWAP but within reach, and weakening.
+    if (st.vwapTest && vwap !== null && b.close > vwap * (1 + o.vwapRearmPct / 100)) {
+      st.vwapTest = false; // pulled away: the next approach is a new one
+    } else if (
+      topped &&
+      !st.vwapTest &&
+      !st.vwapBroken &&
+      vwap !== null &&
+      b.close >= vwap &&
+      b.close <= vwap * (1 + o.vwapApproachPct / 100) &&
+      offHigh >= o.backsideMinOffHighPct &&
+      b.close < b.open &&
+      ((st.prev !== null && b.close < st.prev.low) || st.lowerHigh !== null)
+    ) {
+      st.vwapTest = true;
+      alert(
+        'vwap_test',
+        `Fading into VWAP: closed ${fmt(b.close)}, ${((b.close / vwap - 1) * 100).toFixed(1)}% over VWAP ${fmt(vwap)}, ${offHigh.toFixed(1)}% off the ${fmt(st.high)} high · anticipate the break: risk over ${fmt(stop)}`,
+      );
+    }
+
     if (st.vwapBroken && vwap !== null && b.close > vwap * (1 + o.vwapTouch)) {
       // Squeezed back over VWAP: the add is off until it breaks again.
       st.vwapBroken = false;
     } else if (topped && !st.vwapBroken && vwap !== null && b.close < vwap) {
       st.vwapBroken = true;
+      st.vwapTest = false; // the anticipated break happened; after a reclaim the next approach warns again
       alert(
         'vwap_break',
         `Closed ${fmt(b.close)} under VWAP ${fmt(vwap)}, ${offHigh.toFixed(1)}% off high · add the rest; off on a close over ${fmt(vwap * (1 + o.vwapTouch))}`,
+      );
+    }
+
+    // The one "start shorting" signal: topped, the failure proven (a confirmed top or a lower high),
+    // and a red bar closing under VWAP. Once per setup; a new high starts a new one.
+    const failed = st.confirmLevel !== null || st.lowerHigh !== null;
+    if (
+      topped &&
+      failed &&
+      st.backsideStop === null &&
+      vwap !== null &&
+      b.close < vwap &&
+      b.close < b.open &&
+      offHigh >= o.backsideMinOffHighPct &&
+      offHigh <= o.maxBounceOffHighPct
+    ) {
+      st.backsideStop = stop;
+      const proof = st.lowerHigh !== null ? `lower high ${fmt(st.lowerHigh)}` : `top confirmed under ${fmt(st.confirmLevel!)}`;
+      alert(
+        'backside',
+        `Backside: topped at ${fmt(st.high)}, ${proof}, closed ${fmt(b.close)} under VWAP ${fmt(vwap)} · short: risk over ${fmt(stop)}`,
       );
     }
     return st;

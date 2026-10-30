@@ -2,8 +2,6 @@ import type { FadeStage, SymbolSnapshot } from '@deltascan/shared';
 
 /** Fade-scanner thresholds. Float isn't filtered: the trader shorts runners of any float. */
 export const FADE = {
-  minPrice: 1,
-  minMarketCap: 5e6,
   /** Flagged LATE once this far off the high, or this long since it: adding there is chasing the back side. */
   lateOffHighPct: 25,
   lateMinutes: 45,
@@ -25,11 +23,4 @@ export function isLate(s: SymbolSnapshot): boolean {
   const off = offHighPct(s);
   const mins = minutesSinceHigh(s);
   return (off !== null && off >= FADE.lateOffHighPct) || (mins !== null && mins >= FADE.lateMinutes);
-}
-
-/** Price and market-cap floors. An unknown market cap doesn't exclude a name. */
-export function passesFloors(s: SymbolSnapshot): boolean {
-  if (s.last == null || s.last < FADE.minPrice) return false;
-  if (s.marketCap != null && s.marketCap < FADE.minMarketCap) return false;
-  return true;
 }

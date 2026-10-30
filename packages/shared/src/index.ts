@@ -149,6 +149,10 @@ export interface FadeState {
   lowerHigh: number | null;
   /** Closed a 1-minute bar under VWAP since topping (regular hours): the main add. */
   vwapBroken: boolean;
+  /** Set once the backside signal fired for this setup: the stop for the short. */
+  backsideStop: number | null;
+  /** Topped and fading into VWAP from above, weakening: the break is coming. Cleared on the break or a pull away. */
+  vwapTest: boolean;
 }
 
 /** A short-side signal on the bar that produced it; kept for the chart even when it didn't alert. */
@@ -226,9 +230,11 @@ export const ALERT_TYPES = [
   'resume',
   'topping',
   'rejection_confirmed',
+  'vwap_test',
   'vwap_break',
   'failed_bounce',
   'vwap_bounce',
+  'backside',
 ] as const;
 export type AlertType = (typeof ALERT_TYPES)[number];
 

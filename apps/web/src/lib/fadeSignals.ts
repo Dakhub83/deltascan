@@ -1,6 +1,6 @@
 import type { Alert, AlertType, FadeSignal, FadeState } from '@deltascan/shared';
 
-export type LevelKind = 'hod' | 'risk' | 'trigger' | 'confirmed' | 'lowerHigh';
+export type LevelKind = 'hod' | 'risk' | 'trigger' | 'confirmed' | 'lowerHigh' | 'backside';
 
 export interface FadeLevel {
   kind: LevelKind;
@@ -17,6 +17,12 @@ export function fadeLevels(fade: FadeState | null): FadeLevel[] {
   if (fade.stage === 'rejection' && fade.rejectionLow !== null) out.push({ kind: 'trigger', price: fade.rejectionLow, title: 'CONFIRMS <' });
   if (fade.confirmLevel !== null && fade.stage !== 'rejection') out.push({ kind: 'confirmed', price: fade.confirmLevel, title: 'BROKE' });
   if (fade.lowerHigh !== null && fade.stage !== 'rejection') out.push({ kind: 'lowerHigh', price: fade.lowerHigh, title: 'LH · ADD RISK' });
+  if (fade.backsideStop !== null) {
+    // Usually the same price as RISK or LH: one line, named for the short.
+    const same = out.findIndex((l) => l.kind !== 'hod' && l.kind !== 'trigger' && l.kind !== 'confirmed' && l.price === fade.backsideStop);
+    if (same >= 0) out.splice(same, 1);
+    out.push({ kind: 'backside', price: fade.backsideStop, title: 'SHORT · RISK' });
+  }
   return out;
 }
 
@@ -26,6 +32,18 @@ export function fadeLevels(fade: FadeState | null): FadeLevel[] {
  */
 export function stageAdvice(fade: FadeState, starterPct: number): { label: string | null; hint: string } {
   const rest = 100 - starterPct;
+  if (fade.backsideStop !== null && fade.stage !== 'spike' && fade.stage !== 'extension') {
+    return {
+      label: 'BACKSIDE · SHORT',
+      hint: `Topped, failed and under VWAP: the backside short. Risk over ${fade.backsideStop}. Off on a close back over VWAP.`,
+    };
+  }
+  if (fade.vwapTest && !fade.vwapBroken && fade.stage !== 'spike' && fade.stage !== 'extension') {
+    return {
+      label: '→ VWAP · ANTICIPATE',
+      hint: `Topped and fading into VWAP from above. The ${rest}% add is for the break; get ready, or lean in early with part of it.`,
+    };
+  }
   switch (fade.stage) {
     case 'spike':
       return { label: null, hint: '' };
@@ -49,7 +67,7 @@ export function stageAdvice(fade: FadeState, starterPct: number): { label: strin
   }
 }
 
-export const SIGNAL_TYPES: readonly AlertType[] = ['topping', 'rejection_confirmed', 'vwap_break', 'failed_bounce', 'vwap_bounce'];
+export const SIGNAL_TYPES: readonly AlertType[] = ['topping', 'rejection_confirmed', 'vwap_test', 'vwap_break', 'failed_bounce', 'vwap_bounce', 'backside'];
 
 export interface SignalMark {
   /** Start of the displayed bar the signal belongs to. */

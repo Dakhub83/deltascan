@@ -15,6 +15,8 @@ const fade = (over: Partial<FadeState>): FadeState => ({
   confirmLevel: null,
   lowerHigh: null,
   vwapBroken: false,
+  backsideStop: null,
+  vwapTest: false,
   ...over,
 });
 
@@ -95,5 +97,27 @@ describe('stageAdvice', () => {
     expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true }), 30).label).toBe('UNDER VWAP · ADD 70%');
     expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true }), 25).label).toBe('UNDER VWAP · ADD 75%');
     expect(stageAdvice(fade({ stage: 'spike' }), 30).label).toBeNull();
+  });
+});
+
+describe('backside on the chart', () => {
+  it('draws one SHORT · RISK line in place of the matching RISK or LH line', () => {
+    const levels = fadeLevels(fade({ stage: 'fade', rejectionHigh: 2.7, rejectionLow: 2.55, confirmLevel: 2.55, backsideStop: 2.7 }));
+    expect(levels.map((l) => l.title)).toEqual(['HOD', 'BROKE', 'SHORT · RISK']);
+    const lh = fadeLevels(fade({ stage: 'fade', lowerHigh: 2.4, backsideStop: 2.4 }));
+    expect(lh.map((l) => `${l.title} ${l.price}`)).toEqual(['HOD 2.72', 'SHORT · RISK 2.4']);
+  });
+
+  it('labels the badge BACKSIDE · SHORT until a new high resets the setup', () => {
+    expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true, backsideStop: 2.7 }), 30)).toMatchObject({ label: 'BACKSIDE · SHORT' });
+    expect(stageAdvice(fade({ stage: 'fade', vwapBroken: true, backsideStop: 2.7 }), 30).hint).toContain('Risk over 2.7');
+    expect(stageAdvice(fade({ stage: 'extension', backsideStop: null }), 30).label).toBe('EXTENDED');
+  });
+});
+
+describe('fading into VWAP on the chart', () => {
+  it('shows the anticipation badge until the break, then the add', () => {
+    expect(stageAdvice(fade({ stage: 'confirmation', vwapTest: true }), 30).label).toBe('→ VWAP · ANTICIPATE');
+    expect(stageAdvice(fade({ stage: 'fade', vwapTest: false, vwapBroken: true }), 30).label).toBe('UNDER VWAP · ADD 70%');
   });
 });

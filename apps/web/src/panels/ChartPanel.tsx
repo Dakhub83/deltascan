@@ -62,15 +62,20 @@ const LEVEL_STYLE: Record<LevelKind, { color: string; style: LineStyle }> = {
   trigger: { color: DOWN, style: LineStyle.Dotted },
   confirmed: { color: DOWN, style: LineStyle.Solid },
   lowerHigh: { color: '#f472b6', style: LineStyle.Dashed },
+  backside: { color: DOWN, style: LineStyle.Solid },
 };
 
 const MARK_STYLE: Partial<Record<AlertType, { color: string; text: string }>> = {
   topping: { color: '#f5a524', text: 'TOP' },
   rejection_confirmed: { color: '#f59e9e', text: 'CONF' },
+  vwap_test: { color: '#f5a524', text: '→VWAP' },
   vwap_break: { color: DOWN, text: 'VWAP BRK' },
   failed_bounce: { color: '#f472b6', text: 'LH' },
   vwap_bounce: { color: '#a78bfa', text: 'VWAP BNC' },
+  backside: { color: DOWN, text: 'SHORT' },
 };
+/** The backside signal is the entry: the other arrows are context, drawn dimmer and smaller. */
+const CONTEXT_ALPHA = '99';
 
 const SIGNAL_HISTORY_REFRESH_MS = 30_000;
 const BARS_RETRY_MS = 3_000;
@@ -226,7 +231,15 @@ export function ChartPanel({ params, api: panelApi }: IDockviewPanelProps<ChartP
     const marks: SeriesMarker<Time>[] = sym
       ? signalMarks([...marketData.alerts, ...pastSignals.current], sym, times).map((m) => {
           const st = MARK_STYLE[m.type]!;
-          return { time: toTime(m.barTime), position: 'aboveBar', shape: 'arrowDown', color: st.color, text: st.text };
+          const entry = m.type === 'backside';
+          return {
+            time: toTime(m.barTime),
+            position: 'aboveBar',
+            shape: 'arrowDown',
+            color: entry ? st.color : st.color + CONTEXT_ALPHA,
+            text: st.text,
+            size: entry ? 2 : 1,
+          };
         })
       : [];
     markers.current.setMarkers(marks);
