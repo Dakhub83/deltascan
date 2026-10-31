@@ -57,6 +57,8 @@ export type FadeAlert = (type: AlertType, symbol: string, price: number, detail:
 interface SymbolState {
   session: TradeSession | null;
   lastTs: number;
+  /** The oldest bar seen in the store, to notice history arriving after live bars. */
+  firstSeen: number | null;
   stage: FadeStage | null;
   since: number;
   high: number;
@@ -83,6 +85,7 @@ interface SymbolState {
 const fresh = (): SymbolState => ({
   session: null,
   lastTs: -Infinity,
+  firstSeen: null,
   stage: null,
   since: 0,
   high: -Infinity,
@@ -160,6 +163,14 @@ export class FadeDetector {
     // Every stock is tracked, whatever its price or float: the trader filters in the scanner.
     let st = this.states.get(snap.symbol);
     if (!st) this.states.set(snap.symbol, (st = fresh()));
+    // A symbol added mid-day gets its history after its first live bars: older bars now sit in
+    // front of what was processed, so start over and replay the morning (high, top, setup).
+    const first = bars[0]?.timestamp;
+    if (first !== undefined && st.firstSeen !== null && first < st.firstSeen) {
+      this.states.set(snap.symbol, (st = fresh()));
+      this.history.delete(snap.symbol);
+    }
+    if (first !== undefined) st.firstSeen = first;
     // The last bar is still forming. Bars before the overnight gap are a previous day: measured
     // against today's prevClose they'd make up spikes and gaps, so they're skipped.
     const last = bars.length - 1;
@@ -274,7 +285,7 @@ export class FadeDetector {
   private step(st: SymbolState, b: Bar, snap: Readonly<SymbolSnapshot>, live: boolean): SymbolState {
     const o = this.o;
     const session = b.session ?? 'regular';
-    if (st.session !== session) st = { ...fresh(), session, lastTs: st.lastTs };
+    if (st.session !== session) st = { ...fresh(), session, lastTs: st.lastTs, firstSeen: st.firstSeen };
     st.sessionOpen ??= b.open;
 
     const newHigh = b.high > st.high;

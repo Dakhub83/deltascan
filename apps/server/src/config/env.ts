@@ -35,6 +35,13 @@ const schema = z
     ALPACA_SANDBOX: bool(false),
     ALPACA_PAPER: bool(true),
     ALPACA_STATUSES: bool(false),
+    // Bid/ask quotes. On free iex, trades + quotes share the 30-subscription limit, so this halves the symbols.
+    ALPACA_QUOTES: bool(false),
+    // Top gainers added to the stream each refresh (0 = WATCHLIST only), up to ALPACA_MAX_SYMBOLS in total.
+    ALPACA_MOVERS_TOP: z.coerce.number().int().min(0).max(50).default(20),
+    ALPACA_MOVERS_REFRESH_SEC: int(300),
+    // Trade + quote subscriptions allowed by the plan (bars don't count): 30 on free iex.
+    ALPACA_MAX_SYMBOLS: int(30),
 
     POLYGON_API_KEY: z.string().optional(),
     FINNHUB_API_KEY: z.string().optional(),

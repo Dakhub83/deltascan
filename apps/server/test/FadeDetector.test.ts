@@ -362,6 +362,18 @@ describe('FadeDetector', () => {
     expect(firstSeen.state?.stage).not.toBe('rejection'); // 2.20 "open" is only +10%: no gap
   });
 
+  it('replays from scratch when history arrives after live bars (a symbol added mid-day)', () => {
+    const d = new FadeDetector(() => {}, { alertMaxAgeMs: 3 * 60_000 });
+    const all = bars([SPIKE, EXTEND, REJECT, CONFIRM, [2.5, 2.52, 2.46, 2.48], [2.48, 2.5, 2.45, 2.47]]);
+    // Only the last minutes were streamed at first: the detector thinks the high is 2.52.
+    expect(d.evaluate(snap(), all.slice(-3), NOW)?.high).toBe(2.52);
+    // Then the morning's history lands in front of them: the real 2.72 top, and no stale signals.
+    expect(d.evaluate(snap(), all, NOW)).toMatchObject({ high: 2.72, rejectionHigh: 2.72 });
+    const signals = d.signals('RUN');
+    expect(signals[0]).toMatchObject({ type: 'topping', barTime: T0 + 2 * 60_000 });
+    expect(signals.every((x) => !x.detail.includes('2.52'))).toBe(true);
+  });
+
   it("skips a previous day's bars before the overnight gap", () => {
     // Yesterday ran 2.00 → 2.72 (that's today's prevClose territory, not a spike today)…
     const yesterday = bars([SPIKE, EXTEND, REJECT, CONFIRM]).slice(0, -1).map((b) => ({ ...b, timestamp: b.timestamp - 16 * 60 * 60_000 }));

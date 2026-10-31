@@ -5,6 +5,7 @@ import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine, PriorState } from '../scanner/AlertEngine';
 import type { HaltTracker } from '../scanner/HaltTracker';
 import type { MarketDataProvider } from './providers/MarketDataProvider';
+import { AlpacaRest } from './providers/alpaca/AlpacaRest';
 import { AlpacaStreamProvider } from './providers/alpaca/AlpacaStreamProvider';
 import { MockProvider } from './providers/mock/MockProvider';
 
@@ -102,6 +103,16 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
         feed: env.ALPACA_FEED,
         sandbox: env.ALPACA_SANDBOX,
         statuses: env.ALPACA_STATUSES,
+        quotes: env.ALPACA_QUOTES,
+        // The `test` feed streams the made-up FAKEPACA, which REST knows nothing about.
+        rest:
+          env.ALPACA_FEED === 'test'
+            ? undefined
+            : new AlpacaRest({ keyId: env.ALPACA_KEY_ID!, secretKey: env.ALPACA_SECRET_KEY!, feed: env.ALPACA_FEED, sandbox: env.ALPACA_SANDBOX }),
+        movers:
+          env.ALPACA_FEED === 'test' || env.ALPACA_MOVERS_TOP === 0
+            ? undefined
+            : { top: env.ALPACA_MOVERS_TOP, refreshMs: env.ALPACA_MOVERS_REFRESH_SEC * 1000, maxSymbols: env.ALPACA_MAX_SYMBOLS },
       });
     case 'mock':
       return new MockProvider({
