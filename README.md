@@ -132,12 +132,14 @@ Outside regular hours, scans built on the regular session (Gap Ups, RVOL, HOD, V
 3. To test outside market hours, set `ALPACA_FEED=test` and `WATCHLIST=FAKEPACA`.
 4. During market hours, use `ALPACA_FEED=iex` with up to about 30 symbols.
 
-On startup (and after every reconnect) the server loads each symbol's previous close, today's session so far and about four days of 1-minute bars over Alpaca's REST API, so % change, gap, RVOL, charts and the short signals work right away. It also adds the market's top gainers to the stream every few minutes, so the day's gappers show up without editing `WATCHLIST`:
+On startup (and after every reconnect) the server loads each symbol's previous close, today's session so far and about four days of 1-minute bars over Alpaca's REST API, so % change, gap, RVOL, charts and the short signals work right away. It adds the market's top gainers every minute, and a **radar** watches every stock's 1-minute bars (free on Alpaca: bars don't count toward the symbol limit), so a stock that starts running shows up within about a minute even before it reaches the gainers list. The plan's few live trade slots rotate to whatever is moving hardest; the other rows keep updating once a minute from bars:
 
 | Setting | Default | What it does |
 |---|---|---|
 | `ALPACA_MOVERS_TOP` | `20` | How many of Alpaca's top % gainers to add per refresh. `0` streams `WATCHLIST` only. |
-| `ALPACA_MOVERS_REFRESH_SEC` | `300` | How often the gainers list is checked. Symbols are only added, never dropped mid-session. |
+| `ALPACA_MOVERS_REFRESH_SEC` | `60` | How often the gainers list is checked. Rows are only added, never dropped mid-session. |
+| `ALPACA_RADAR` | `true` | Watch every stock's minute bars and rotate the live slots to the fastest movers. `false` = gainers list only, added until the limit is full. |
+| `ALPACA_RADAR_MOVE_PCT` | `4` | A move of this many % (up or down) within 5 minutes puts a stock on the radar. |
 | `ALPACA_MAX_SYMBOLS` | `30` | The plan's limit on trade + quote subscriptions, `WATCHLIST` included. 30 on the free `iex` feed (bars don't count); raise it on a paid `sip` plan. |
 | `ALPACA_QUOTES` | `false` | Stream bid/ask quotes too (spread, quote card). On the free plan this halves the symbols, since trades and quotes share the limit. |
 

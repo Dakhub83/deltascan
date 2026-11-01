@@ -7,6 +7,7 @@ import type { HaltTracker } from '../scanner/HaltTracker';
 import type { MarketDataProvider } from './providers/MarketDataProvider';
 import { AlpacaRest } from './providers/alpaca/AlpacaRest';
 import { AlpacaStreamProvider } from './providers/alpaca/AlpacaStreamProvider';
+import { DEFAULT_RADAR } from './providers/alpaca/MoverRadar';
 import { MockProvider } from './providers/mock/MockProvider';
 
 /** Wires a market data provider into the local cache and alert engine, and tracks throughput. */
@@ -113,6 +114,7 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
           env.ALPACA_FEED === 'test' || env.ALPACA_MOVERS_TOP === 0
             ? undefined
             : { top: env.ALPACA_MOVERS_TOP, refreshMs: env.ALPACA_MOVERS_REFRESH_SEC * 1000, maxSymbols: env.ALPACA_MAX_SYMBOLS },
+        radar: env.ALPACA_RADAR ? { ...DEFAULT_RADAR, minMovePct: env.ALPACA_RADAR_MOVE_PCT } : undefined,
       });
     case 'mock':
       return new MockProvider({

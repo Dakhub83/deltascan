@@ -39,7 +39,11 @@ const schema = z
     ALPACA_QUOTES: bool(false),
     // Top gainers added to the stream each refresh (0 = WATCHLIST only), up to ALPACA_MAX_SYMBOLS in total.
     ALPACA_MOVERS_TOP: z.coerce.number().int().min(0).max(50).default(20),
-    ALPACA_MOVERS_REFRESH_SEC: int(300),
+    ALPACA_MOVERS_REFRESH_SEC: int(60),
+    // Watch every symbol's minute bars (free) and rotate live slots to the fastest movers.
+    ALPACA_RADAR: bool(true),
+    // A move of this many % (up or down) inside 5 minutes puts a stock on the radar.
+    ALPACA_RADAR_MOVE_PCT: z.coerce.number().positive().default(4),
     // Trade + quote subscriptions allowed by the plan (bars don't count): 30 on free iex.
     ALPACA_MAX_SYMBOLS: int(30),
 

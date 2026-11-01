@@ -1,9 +1,11 @@
 import type { RawData } from 'ws';
+import type { Bar } from '@deltascan/shared';
 import type { Logger } from '../../../lib/logger';
 import { ReconnectingSocket } from '../../ReconnectingSocket';
 import { MarketDataProvider } from '../MarketDataProvider';
 import type { AlpacaRest } from './AlpacaRest';
 import { MOVERS_MAX, isCommonStock, runBootstrap } from './bootstrap';
+import { MoverRadar, barPrints, planLive, type RadarOptions } from './MoverRadar';
 import { haltStateOf, parseAlpacaTimestamp, type AlpacaMessage } from './messages';
 
 export interface AlpacaStreamOptions {
@@ -27,7 +29,22 @@ export interface AlpacaStreamOptions {
   rest?: AlpacaRest;
   /** Adds the market's top gainers to the subscription, up to `maxSymbols` in total. */
   movers?: { top: number; refreshMs: number; maxSymbols: number };
+  /**
+   * Watches every symbol's minute bars (free: bars don't count toward the plan limit) and
+   * rotates the live trade slots to whatever is moving hardest. Needs `movers`.
+   */
+  radar?: RadarOptions;
 }
+
+/** Rows the radar and gainers list may add in a day; each is a scanner row followed by minute bars at least. */
+const MAX_TRACKED = 300;
+/** A live symbol keeps its slot at least this long before a hotter one can take it. */
+const MIN_LIVE_MS = 2 * 60_000;
+/** Points of % move a waiting symbol needs over the coldest live one to take its slot. */
+const SWAP_MARGIN_PCT = 2;
+/** Bars arrive in a burst just after each minute; rotation runs once the burst settles. */
+const REBALANCE_DEBOUNCE_MS = 1_500;
+const MINUTE = 60_000;
 
 
 // Alpaca stream error codes that retrying cannot fix.
@@ -52,10 +69,21 @@ export class AlpacaStreamProvider extends MarketDataProvider {
   private started = false;
   private authentications = 0;
   private moversTimer: NodeJS.Timeout | null = null;
+  private readonly radar: MoverRadar | null;
+  /** Symbols with a trade subscription → when they got it. Without the radar, every symbol. */
+  private readonly live = new Map<string, number>();
+  /** Symbols asked for from outside (WATCHLIST): always live, never rotated out. */
+  private readonly pinned = new Set<string>();
+  /** Bar-only symbols → the first minute whose bar is folded into prints (it had no trades). */
+  private readonly barOnlyFrom = new Map<string, number>();
+  private gainersRank: string[] = [];
+  private internalAdd = false;
+  private rebalanceTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: AlpacaStreamOptions) {
     super();
     this.log = opts.logger.child({ provider: this.name });
+    this.radar = opts.radar && opts.movers && opts.rest ? new MoverRadar(opts.radar) : null;
     const host = opts.sandbox ? 'stream.data.sandbox.alpaca.markets' : 'stream.data.alpaca.markets';
     // The 24/7 test stream is a "feed" at /v2/test.
     this.socket = new ReconnectingSocket({
@@ -87,14 +115,40 @@ export class AlpacaStreamProvider extends MarketDataProvider {
 
   stop(): void {
     if (this.moversTimer) clearInterval(this.moversTimer);
-    this.moversTimer = null;
+    if (this.rebalanceTimer) clearTimeout(this.rebalanceTimer);
+    this.moversTimer = this.rebalanceTimer = null;
     this.socket.stop();
   }
 
+  /** Trade subscriptions the plan allows (trades and quotes share the limit; bars are free). */
+  private get slots(): number {
+    return Math.floor((this.opts.movers?.maxSymbols ?? Infinity) / (this.opts.quotes ? 2 : 1));
+  }
+
   protected onSubscribe(symbols: string[]): void {
-    if (this.authenticated) this.sendSubscription('subscribe', symbols);
-    // Otherwise the full set is sent once authentication succeeds.
+    if (!this.radar || !this.internalAdd) {
+      const now = Date.now();
+      for (const s of symbols) {
+        if (this.radar) this.pinned.add(s);
+        this.live.set(s, now);
+      }
+      // Otherwise the full set is sent once authentication succeeds.
+      if (this.authenticated) this.sendTrades('subscribe', symbols);
+    } else {
+      // Tracked: a row followed by minute bars until the rotation gives it a live slot.
+      for (const s of symbols) this.barOnlyFrom.set(s, 0);
+      this.scheduleRebalance();
+    }
     if (this.started) void this.bootstrap(symbols);
+  }
+
+  private track(symbols: string[]): void {
+    this.internalAdd = true;
+    try {
+      this.subscribe(symbols);
+    } finally {
+      this.internalAdd = false;
+    }
   }
 
   private async bootstrap(symbols: string[]): Promise<void> {
@@ -119,6 +173,13 @@ export class AlpacaStreamProvider extends MarketDataProvider {
     try {
       // Ask for the longest list: warrants and rights are filtered out before taking the top N.
       const gainers = (await rest.topGainers(MOVERS_MAX)).filter(isCommonStock).slice(0, movers.top);
+      if (this.radar) {
+        this.gainersRank = gainers;
+        const added = gainers.filter((s) => !this.subscribed.has(s)).slice(0, Math.max(0, MAX_TRACKED - this.subscribed.size));
+        if (added.length) this.track(added);
+        this.log.info({ gainers: gainers.length, added, tracked: this.subscribed.size, live: this.live.size }, 'movers refreshed');
+        return;
+      }
       // The cap counts trade and quote subscriptions; bars are free.
       const room = Math.floor(movers.maxSymbols / (this.opts.quotes ? 2 : 1)) - this.symbols.length;
       const added = gainers.filter((s) => !this.subscribed.has(s)).slice(0, Math.max(0, room));
@@ -131,19 +192,84 @@ export class AlpacaStreamProvider extends MarketDataProvider {
   }
 
   protected onUnsubscribe(symbols: string[]): void {
-    if (this.authenticated) this.sendSubscription('unsubscribe', symbols);
+    const live = symbols.filter((s) => this.live.delete(s));
+    symbols.forEach((s) => (this.pinned.delete(s), this.barOnlyFrom.delete(s)));
+    if (this.authenticated) this.sendTrades('unsubscribe', live);
   }
 
-  private sendSubscription(action: 'subscribe' | 'unsubscribe', symbols: string[]): void {
+  private scheduleRebalance(): void {
+    if (!this.radar || this.rebalanceTimer) return;
+    this.rebalanceTimer = setTimeout(() => {
+      this.rebalanceTimer = null;
+      this.rebalance(Date.now());
+    }, REBALANCE_DEBOUNCE_MS);
+  }
+
+  /** Tracks the radar's fast movers and hands the live slots to the hottest tracked symbols. */
+  private rebalance(now: number): void {
+    const radar = this.radar;
+    if (!radar) return;
+    const room = Math.max(0, MAX_TRACKED - this.subscribed.size);
+    const found = radar
+      .candidates(now)
+      .filter((c) => !this.subscribed.has(c.symbol) && isCommonStock(c.symbol))
+      .slice(0, room);
+    if (found.length) {
+      this.log.info({ found: found.map((c) => `${c.symbol} ${c.movePct > 0 ? '+' : ''}${c.movePct.toFixed(1)}%`) }, 'radar: fast movers');
+      this.track(found.map((c) => c.symbol));
+    }
+    const gainers = new Set(this.gainersRank);
+    const plan = planLive({
+      live: this.live,
+      tracked: [...this.gainersRank.filter((s) => this.subscribed.has(s)), ...this.symbols.filter((s) => !gainers.has(s))],
+      pinned: this.pinned,
+      slots: this.slots,
+      heat: (s) => radar.heat(s, now),
+      now,
+      minLiveMs: MIN_LIVE_MS,
+      swapMargin: SWAP_MARGIN_PCT,
+    });
+    if (!plan.add.length && !plan.drop.length) return;
+    // Rotation runs seconds into a minute (just after the bar burst), so the dropped symbol's bar
+    // for this minute is folded in too: counting those seconds twice beats missing the minute.
+    const thisMinute = Math.floor(now / MINUTE) * MINUTE;
+    for (const s of plan.drop) {
+      this.live.delete(s);
+      this.barOnlyFrom.set(s, thisMinute);
+    }
+    for (const s of plan.add) {
+      this.live.set(s, now);
+      this.barOnlyFrom.delete(s);
+    }
+    if (this.authenticated) {
+      this.sendTrades('unsubscribe', plan.drop);
+      this.sendTrades('subscribe', plan.add);
+    }
+    const fmt = (s: string) => `${s} ${radar.heat(s, now).toFixed(1)}%`;
+    this.log.info({ live: plan.add.map(fmt), barsOnly: plan.drop.map(fmt), slots: this.slots }, 'live slots rotated');
+  }
+
+  /** Trade (and quote / status) subscriptions. Without the radar's wildcard, bars ride along. */
+  private sendTrades(action: 'subscribe' | 'unsubscribe', symbols: string[]): void {
     if (!symbols.length) return;
     this.socket.send({
       action,
       trades: symbols,
       ...(this.opts.quotes ? { quotes: symbols } : {}),
-      bars: symbols,
+      ...(this.radar ? {} : { bars: symbols }),
       ...(this.opts.statuses ? { statuses: symbols } : {}),
     });
     this.log.info({ action, count: symbols.length }, 'subscription sent');
+  }
+
+  private onStreamBar(bar: Bar): void {
+    this.radar?.onBar(bar);
+    this.scheduleRebalance();
+    if (!this.subscribed.has(bar.symbol)) return;
+    const from = this.barOnlyFrom.get(bar.symbol);
+    // No trades for this symbol: its bar stands in for them, so the row, VWAP and alerts move.
+    if (from !== undefined && bar.timestamp >= from) for (const t of barPrints(bar)) this.emit('trade', t);
+    this.emit('bar', bar);
   }
 
   private handleRaw(data: RawData): void {
@@ -179,7 +305,7 @@ export class AlpacaStreamProvider extends MarketDataProvider {
           break;
         case 'b':
         case 'u': // updated bar (late trades corrected a bar already sent)
-          this.emit('bar', {
+          this.onStreamBar({
             symbol: msg.S,
             open: msg.o,
             high: msg.h,
@@ -226,7 +352,8 @@ export class AlpacaStreamProvider extends MarketDataProvider {
       this.setStatus('authenticated');
       this.log.info({ feed: this.opts.feed }, 'authenticated');
       // Restore the full subscription set (initial connect and every reconnect).
-      this.sendSubscription('subscribe', this.symbols);
+      this.sendTrades('subscribe', [...this.live.keys()]);
+      if (this.radar) this.socket.send({ action: 'subscribe', bars: ['*'] });
       // After a reconnect, trades were missed: re-seed today's state.
       if (this.authentications > 1) void this.bootstrap(this.symbols);
     }
