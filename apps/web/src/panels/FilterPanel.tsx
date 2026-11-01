@@ -39,7 +39,7 @@ interface RangeKind {
   note?: string;
 }
 
-const PRICE_KIND: RangeKind = {
+export const PRICE_KIND: RangeKind = {
   title: 'Price',
   prefix: '$',
   presets: PRICE_PRESETS,
@@ -48,7 +48,7 @@ const PRICE_KIND: RangeKind = {
   anyLabel: 'Any price',
 };
 
-const FLOAT_KIND: RangeKind = {
+export const FLOAT_KIND: RangeKind = {
   title: 'Float (shares)',
   suffix: 'M',
   presets: FLOAT_PRESETS,
@@ -122,7 +122,7 @@ function RangeFilter({ kind, range, onChange, close }: { kind: RangeKind; range:
 }
 
 /** Toolbar button that opens a range popover; turns blue and shows the range while one is set. */
-function RangeButton({
+export function RangeButton({
   kind,
   range,
   label,

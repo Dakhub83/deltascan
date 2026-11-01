@@ -293,6 +293,10 @@ export function addChartWindow(): void {
   api?.addPanel({ id: `chart-${uid()}`, component: 'chart', title: 'Chart', params: {}, floating: { ...floating(), width: 820, height: 480 } });
 }
 
+export function addNewHighsWindow(): void {
+  api?.addPanel({ id: `newhighs-${uid()}`, component: 'newhighs', title: 'New highs', params: {}, floating: { ...floating(), width: 760, height: 380 } });
+}
+
 export function addHaltWindow(): void {
   api?.addPanel({ id: `halts-${uid()}`, component: 'halts', title: 'Halts', params: {}, floating: { ...floating(), width: 760, height: 320 } });
 }

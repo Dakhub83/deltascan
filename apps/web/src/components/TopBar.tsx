@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Crosshair,
   LayoutGrid,
+  MountainSnow,
   OctagonPause,
   Plus,
   Radar,
@@ -34,6 +35,7 @@ import {
   addShortCalcWindow,
   addFilterWindow,
   addHaltWindow,
+  addNewHighsWindow,
   addSymbolWindow,
   deleteLayout,
   listLayouts,
@@ -205,6 +207,10 @@ function NewWindowMenu() {
           <MenuItem onClick={() => (addAlertWindow(), close())}>
             <Siren className="size-3.5 text-warn" />
             Alert window
+          </MenuItem>
+          <MenuItem onClick={() => (addNewHighsWindow(), close())}>
+            <MountainSnow className="size-3.5 text-up" />
+            New highs (NHOD)
           </MenuItem>
           <MenuItem onClick={() => (addHaltWindow(), close())}>
             <OctagonPause className="size-3.5 text-warn" />

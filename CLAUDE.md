@@ -98,6 +98,7 @@ npm run typecheck    # all workspaces
 
 - **Bullish scanners** (Trade Ideas-style, the early warning for future fades): New Highs on 2× RV, Up 50¢ in 5 Min, Under $20 Moving Up Fast, Turbo Breaks Up, Rallying off the Bottom. Thresholds are in `BULLISH` in `presets.ts` (tests in `presets.test.ts`); new columns `chg5mUsd` and `offLowPct`. Scans needing daily bars (yearly highs, up 5 days, MA breakouts), RSI or an earnings calendar wait on ARCHITECTURE steps 2–3.
 
+- **New highs window** (Trade Ideas' repeating New High alert window): `panels/NewHighsPanel.tsx`, logic in `lib/newHighs.ts` (tests in `newHighs.test.ts`), **+ Window → New highs (NHOD)**. Built client-side from the `new_high` alerts (one per symbol per minute at most, the cooldown). **Feed** lists every NHOD with its number that day (`# Today`) and repeats in the last 10 min (🔥 at 3+); **Leaders** keeps one row per stock, most repeats first. `Last NHOD` turns **QUIET** after 3 min without a new high once a stock pushed twice: the front side stalling, the trader's cue to watch for TOPPING. Price / Float / RVOL / Repeats filters use the live snapshot and are saved with the layout (`NewHighsPanelParams`). Counts only cover the alerts the client holds (the server's last 500 on connect).
 - **Price filter**: each scanner window has its own price range (the **$ Price** button in its toolbar), applied on top of the scanner's filter, in `FilterPanelParams.priceRange`, so it's saved with layouts. Logic and quick ranges are in `scanners/priceRange.ts`. Symbols with no price yet are hidden while a range is set. A **Float** button beside it works the same way (`FilterPanelParams.floatRange`, `scanners/floatRange.ts`; bounds typed in millions or with K/M); unknown floats pass, because the live feed has no float data yet.
 
 ### Still to do (in order)
@@ -106,7 +107,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (89 server, 40 web), typecheck clean.**
+Status: **tests pass (90 server, 46 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).
