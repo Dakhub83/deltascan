@@ -249,7 +249,7 @@ export function NewHighsPanel({ params, api: panelApi }: IDockviewPanelProps<New
             setSelectedSymbol(e.data.symbol);
             onSymbolClick(e.data.symbol);
           }}
-          overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">Waiting for new highs of day…</span>'
+          overlayNoRowsTemplate='<span style="color:#7d8799;font-size:12px">Waiting for new highs of day…</span>'
         />
       </div>
     </div>

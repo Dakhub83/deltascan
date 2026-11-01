@@ -146,7 +146,7 @@ export function HaltPanel() {
             setSelectedSymbol(e.data.symbol);
             onSymbolClick(e.data.symbol);
           }}
-          overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">No halts today</span>'
+          overlayNoRowsTemplate='<span style="color:#7d8799;font-size:12px">No halts today</span>'
         />
       </div>
     </div>

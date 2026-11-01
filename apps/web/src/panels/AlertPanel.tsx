@@ -164,7 +164,7 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
             onSymbolClick(e.data.symbol);
           }}
           asyncTransactionWaitMillis={60}
-          overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">Waiting for alerts…</span>'
+          overlayNoRowsTemplate='<span style="color:#7d8799;font-size:12px">Waiting for alerts…</span>'
         />
       </div>
     </div>

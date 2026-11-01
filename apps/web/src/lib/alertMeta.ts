@@ -89,8 +89,8 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     label: 'Topping (starter)',
     short: 'TOPPING',
     icon: TriangleAlert,
-    text: 'text-warn',
-    badge: 'bg-warn/12 text-warn ring-warn/25',
+    text: 'text-down',
+    badge: 'bg-down/12 text-down ring-down/30',
     tone: [880, 660],
   },
   rejection_confirmed: {
@@ -98,15 +98,15 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     short: 'REJECT ✓',
     icon: TrendingDown,
     text: 'text-down',
-    badge: 'bg-down/12 text-down ring-down/25',
+    badge: 'bg-down/12 text-down ring-down/30',
     tone: [988, 740, 523],
   },
   vwap_test: {
     label: 'Fading into VWAP (anticipate the break)',
     short: '→ VWAP',
     icon: ChevronsDown,
-    text: 'text-warn',
-    badge: 'bg-warn/12 text-warn ring-warn/25',
+    text: 'text-down',
+    badge: 'bg-down/16 text-down ring-down/40',
     tone: [784, 698, 659],
   },
   vwap_break: {
@@ -114,7 +114,7 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     short: 'VWAP BRK',
     icon: CircleArrowDown,
     text: 'text-down',
-    badge: 'bg-down/20 text-down ring-down/40',
+    badge: 'bg-down/24 text-down ring-down/60 font-bold',
     tone: [988, 784, 587, 392],
   },
   failed_bounce: {
@@ -122,7 +122,7 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     short: 'FAIL BNC',
     icon: ArrowDownRight,
     text: 'text-down',
-    badge: 'bg-down/12 text-down ring-down/25',
+    badge: 'bg-down/24 text-down ring-down/60 font-bold',
     tone: [784, 587, 440],
   },
   backside: {
@@ -130,7 +130,7 @@ export const ALERT_META: Record<AlertType, AlertMeta> = {
     short: 'SHORT',
     icon: TrendingDown,
     text: 'text-down',
-    badge: 'bg-down/30 text-down ring-down/60 font-bold',
+    badge: 'bg-down text-white ring-down font-extrabold',
     tone: [1175, 880, 659, 440],
   },
   vwap_bounce: {

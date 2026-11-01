@@ -110,7 +110,7 @@ function createChartIn(container: HTMLElement): { chart: IChartApi; series: Seri
     autoSize: true,
     layout: {
       background: { type: ColorType.Solid, color: '#0c1017' },
-      textColor: '#6b7587',
+      textColor: '#7d8799',
       fontSize: 11,
       fontFamily: "'JetBrains Mono Variable', ui-monospace, monospace",
     },
