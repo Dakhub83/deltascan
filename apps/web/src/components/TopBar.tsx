@@ -490,12 +490,14 @@ export function TopBar() {
   return (
     <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-bg px-3">
       <div className="flex items-center gap-2">
-        <div className="grid size-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-accent/30 ring-inset">
-          <Radar className="size-4 text-accent" />
-        </div>
-        <span className="text-[14px] font-semibold tracking-tight">
-          Delta<span className="text-accent">Scan</span>
-        </span>
+        <a href="/" title="DeltaScan home page" className="flex items-center gap-2 rounded-md transition-opacity hover:opacity-80">
+          <div className="grid size-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-accent/30 ring-inset">
+            <Radar className="size-4 text-accent" />
+          </div>
+          <span className="text-[14px] font-semibold tracking-tight">
+            Delta<span className="text-accent">Scan</span>
+          </span>
+        </a>
         {simulated && (
           <span className="flex items-center gap-1 rounded bg-warn/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-warn ring-1 ring-warn/25 ring-inset">
             <Zap className="size-3" />
