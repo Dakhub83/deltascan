@@ -8,7 +8,7 @@ export const gridTheme = themeQuartz.withParams({
   foregroundColor: '#dfe4ec',
   chromeBackgroundColor: '#0c1017',
   headerBackgroundColor: '#0a0d13',
-  headerTextColor: '#6b7587',
+  headerTextColor: '#7d8799',
   headerFontSize: 10,
   headerFontWeight: 600,
   headerHeight: 26,

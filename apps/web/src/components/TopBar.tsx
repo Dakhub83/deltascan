@@ -1,8 +1,56 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Bell, BellOff, LayoutGrid, Plus, Radar, RotateCcw, Search, Settings2, Siren, Crosshair, Volume2, VolumeX, Zap } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  Bell,
+  BellOff,
+  Calculator,
+  ChartCandlestick,
+  Check,
+  CircleUserRound,
+  Download,
+  ListPlus,
+  LogOut,
+  FolderOpen,
+  Crosshair,
+  LayoutGrid,
+  MountainSnow,
+  OctagonPause,
+  Plus,
+  Radar,
+  RotateCcw,
+  ShieldAlert,
+  Save,
+  Search,
+  Settings2,
+  Siren,
+  Trash2,
+  Volume2,
+  VolumeX,
+  Zap,
+} from 'lucide-react';
+import type { MarketSession } from '@deltascan/shared';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
-import { addAlertWindow, addFilterWindow, addSymbolWindow, resetLayout } from '../lib/layout';
+import { signOut } from '../lib/session';
+import { useSessionStore } from '../store/sessionStore';
+import {
+  activeLayoutName,
+  addAlertWindow,
+  addChartWindow,
+  addDilutionWindow,
+  addShortCalcWindow,
+  addFilterWindow,
+  addHaltWindow,
+  addNewHighsWindow,
+  addWatchlistWindow,
+  addSymbolWindow,
+  deleteLayout,
+  listLayouts,
+  loadLayout,
+  loadLayoutFromText,
+  resetLayout,
+  saveLayoutAs,
+  saveLayoutToFile,
+} from '../lib/layout';
 import { fmtPct, fmtPrice, signClass } from '../lib/format';
 import { playTone } from '../lib/alertEffects';
 import { ALERT_META } from '../lib/alertMeta';
@@ -31,6 +79,14 @@ const etClock = new Intl.DateTimeFormat('en-US', {
 });
 const etParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', weekday: 'short', hourCycle: 'h23' });
 
+const SESSION_LABELS: Record<MarketSession, { label: string; cls: string }> = {
+  pre: { label: 'Pre-market', cls: 'text-warn' },
+  regular: { label: 'Market open', cls: 'text-up' },
+  post: { label: 'After hours', cls: 'text-violet' },
+  closed: { label: 'Closed', cls: 'text-muted' },
+};
+
+/** Wall-clock fallback until the server reports its session. */
 function sessionLabel(now: number): { label: string; cls: string } {
   const parts = Object.fromEntries(etParts.formatToParts(now).map((p) => [p.type, p.value]));
   const mins = Number(parts.hour) * 60 + Number(parts.minute);
@@ -105,10 +161,11 @@ function IndexStrip() {
 
 function ClockAndSession() {
   const now = useSecondTick();
-  const session = sessionLabel(now);
+  const serverSession = useUiStore((s) => s.session);
+  const session = serverSession ? SESSION_LABELS[serverSession] : sessionLabel(now);
   return (
     <div className="hidden items-center gap-2 md:flex">
-      <span className={clsx('text-[11px] font-medium', session.cls)}>{session.label}</span>
+      <span className={clsx('text-[11px] font-medium whitespace-nowrap', session.cls)}>{session.label}</span>
       <span className="num text-[12px] text-dim">{etClock.format(now)} ET</span>
     </div>
   );
@@ -141,13 +198,188 @@ function NewWindowMenu() {
           ))}
           <div className="my-1 h-px bg-line" />
           <MenuLabel>Tools</MenuLabel>
+          <MenuItem onClick={() => (addChartWindow(), close())}>
+            <ChartCandlestick className="size-3.5 text-up" />
+            Chart
+          </MenuItem>
+          <MenuItem onClick={() => (addDilutionWindow(), close())}>
+            <ShieldAlert className="size-3.5 text-down" />
+            Dilution tracker
+          </MenuItem>
+          <MenuItem onClick={() => (addShortCalcWindow(), close())}>
+            <Calculator className="size-3.5 text-warn" />
+            Short calc
+          </MenuItem>
           <MenuItem onClick={() => (addAlertWindow(), close())}>
             <Siren className="size-3.5 text-warn" />
             Alert window
           </MenuItem>
+          <MenuItem onClick={() => (addWatchlistWindow(), close())}>
+            <ListPlus className="size-3.5 text-accent" />
+            My watchlist
+          </MenuItem>
+          <MenuItem onClick={() => (addNewHighsWindow(), close())}>
+            <MountainSnow className="size-3.5 text-up" />
+            New highs (NHOD)
+          </MenuItem>
+          <MenuItem onClick={() => (addHaltWindow(), close())}>
+            <OctagonPause className="size-3.5 text-warn" />
+            Halts
+          </MenuItem>
           <MenuItem onClick={() => (addSymbolWindow(), close())}>
             <Crosshair className="size-3.5 text-cyan" />
             Symbol detail
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+function LayoutMenu() {
+  const [, refresh] = useState(0);
+  const [name, setName] = useState('');
+  const [hint, setHint] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const showNotice = useUiStore((s) => s.showNotice);
+  const layouts = listLayouts();
+  const active = activeLayoutName();
+  const exists = layouts.some((l) => l.name === name.trim());
+  const bump = () => refresh((n) => n + 1);
+
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return setHint('Type a name for this layout first.');
+    if (saveLayoutAs(name)) {
+      setHint(`Saved "${name.trim()}" in this browser.`);
+      setName('');
+      bump();
+    }
+  };
+
+  const saveToFile = (close: () => void) => {
+    // No await before the picker opens: it needs this click's user gesture.
+    saveLayoutToFile(name.trim() || activeLayoutName() || 'DeltaScan layout')
+      .then(({ status, fileName }) => {
+        if (status === 'cancelled') return;
+        close();
+        showNotice(
+          status === 'saved' ? `Layout saved to ${fileName}.` : `Layout downloaded as ${fileName} (this browser can't choose a folder).`,
+          'info',
+        );
+      })
+      .catch((err: Error) => showNotice(`Couldn't save the layout file: ${err.message}`));
+  };
+
+  const openFile = (file: File | undefined, close: () => void) => {
+    if (!file) return;
+    void file.text().then((text) => {
+      try {
+        const loaded = loadLayoutFromText(text);
+        close();
+        showNotice(`Opened layout "${loaded}" from ${file.name}.`, 'info');
+      } catch (err) {
+        showNotice((err as Error).message);
+      }
+    });
+  };
+
+  return (
+    <Popover
+      align="right"
+      trigger={(open) => (
+        <IconButton title="Layouts" active={open}>
+          <LayoutGrid className="size-4" />
+        </IconButton>
+      )}
+    >
+      {(close) => (
+        <div className="w-64">
+          <MenuLabel>Saved layouts</MenuLabel>
+          {layouts.length === 0 && <div className="px-2.5 py-1.5 text-[11px] text-muted">None yet. Save your current windows below.</div>}
+          {layouts.map((l) => (
+            <div key={l.name} className="group flex items-center rounded-md hover:bg-hover">
+              <button
+                type="button"
+                onClick={() => {
+                  loadLayout(l.name);
+                  close();
+                }}
+                className={clsx('flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left text-[12px]', l.name === active ? 'text-fg' : 'text-dim hover:text-fg')}
+                title={`Open "${l.name}"`}
+              >
+                <Check className={clsx('size-3.5 shrink-0', l.name === active ? 'text-accent' : 'invisible')} />
+                <span className="truncate">{l.name}</span>
+              </button>
+              <IconButton
+                title={`Update "${l.name}" with the current windows`}
+                onClick={() => {
+                  saveLayoutAs(l.name);
+                  bump();
+                }}
+                className="opacity-0 group-hover:opacity-100"
+              >
+                <Save className="size-3.5" />
+              </IconButton>
+              <IconButton
+                title={`Delete "${l.name}"`}
+                onClick={() => {
+                  if (!window.confirm(`Delete the layout "${l.name}"?`)) return;
+                  deleteLayout(l.name);
+                  bump();
+                }}
+                className="mr-1 opacity-0 group-hover:opacity-100 hover:text-down"
+              >
+                <Trash2 className="size-3.5" />
+              </IconButton>
+            </div>
+          ))}
+          <div className="my-1 h-px bg-line" />
+          <form onSubmit={save} className="flex items-center gap-1.5 px-1.5 py-1">
+            <input
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setHint(null);
+              }}
+              placeholder="Name this layout…"
+              maxLength={40}
+              className="h-7 min-w-0 flex-1 rounded-md border border-line bg-panel px-2 text-[12px] text-fg outline-none placeholder:text-muted focus:border-accent/60"
+            />
+            <button type="submit" className="h-7 rounded-md bg-accent px-2.5 text-[12px] font-medium text-white">
+              {exists ? 'Replace' : 'Save'}
+            </button>
+          </form>
+          {hint && <div className="px-2.5 pb-1 text-[11px] text-muted">{hint}</div>}
+          <div className="my-1 h-px bg-line" />
+          <MenuItem onClick={() => saveToFile(close)}>
+            <Download className="size-3.5" />
+            Save layout to file…
+          </MenuItem>
+          <MenuItem onClick={() => fileInput.current?.click()}>
+            <FolderOpen className="size-3.5" />
+            Open layout file…
+          </MenuItem>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            aria-label="Layout file"
+            className="hidden"
+            onChange={(e) => {
+              openFile(e.target.files?.[0], close);
+              e.target.value = '';
+            }}
+          />
+          <div className="my-1 h-px bg-line" />
+          <MenuItem
+            onClick={() => {
+              resetLayout();
+              close();
+            }}
+          >
+            <RotateCcw className="size-3.5" />
+            Default layout
           </MenuItem>
         </div>
       )}
@@ -208,10 +440,39 @@ function SettingsMenu() {
           <Toggle label="Desktop notifications" on={settings.notifications} onChange={(v) => void setNotifications(v)} />
           <MenuLabel>Display</MenuLabel>
           <Toggle label="Flash price changes" on={settings.flashCells} onChange={(v) => update({ flashCells: v })} />
+          <Toggle label="Scrolling ticker" on={settings.tickerTape} onChange={(v) => update({ tickerTape: v })} />
           <div className="my-1 h-px bg-line" />
           <MenuItem onClick={resetLayout}>
             <RotateCcw className="size-3.5" />
             Reset layout
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+/** Shown only when signed in: the account's email and Sign out. */
+function AccountMenu() {
+  const user = useSessionStore((s) => s.session?.user);
+  if (!user) return null;
+  return (
+    <Popover
+      align="right"
+      trigger={() => (
+        <span className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg" title={user.email}>
+          <CircleUserRound className="size-4" />
+        </span>
+      )}
+    >
+      {() => (
+        <div className="w-56">
+          <MenuLabel>Signed in as</MenuLabel>
+          <p className="truncate px-2.5 pb-2 text-[12px] text-fg">{user.email}</p>
+          <div className="my-1 h-px bg-line" />
+          <MenuItem onClick={() => void signOut().finally(() => location.reload())}>
+            <LogOut className="size-3.5" />
+            Sign out
           </MenuItem>
         </div>
       )}
@@ -229,12 +490,14 @@ export function TopBar() {
   return (
     <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-bg px-3">
       <div className="flex items-center gap-2">
-        <div className="grid size-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-accent/30 ring-inset">
-          <Radar className="size-4 text-accent" />
-        </div>
-        <span className="text-[14px] font-semibold tracking-tight">
-          Delta<span className="text-accent">Scan</span>
-        </span>
+        <a href="/" title="DeltaScan home page" className="flex items-center gap-2 rounded-md transition-opacity hover:opacity-80">
+          <div className="grid size-7 place-items-center rounded-lg bg-accent/15 ring-1 ring-accent/30 ring-inset">
+            <Radar className="size-4 text-accent" />
+          </div>
+          <span className="text-[14px] font-semibold tracking-tight">
+            Delta<span className="text-accent">Scan</span>
+          </span>
+        </a>
         {simulated && (
           <span className="flex items-center gap-1 rounded bg-warn/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-warn ring-1 ring-warn/25 ring-inset">
             <Zap className="size-3" />
@@ -257,10 +520,9 @@ export function TopBar() {
           <IconButton title={notifications ? 'Notifications on' : 'Notifications off'} active={notifications}>
             {notifications ? <Bell className="size-4" /> : <BellOff className="size-4" />}
           </IconButton>
-          <IconButton title="Reset layout" onClick={resetLayout}>
-            <LayoutGrid className="size-4" />
-          </IconButton>
+          <LayoutMenu />
           <SettingsMenu />
+          <AccountMenu />
         </div>
       </div>
     </header>

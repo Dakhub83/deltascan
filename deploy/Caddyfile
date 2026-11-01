@@ -1,0 +1,12 @@
+# HTTPS for DeltaScan. Caddy fetches and renews the certificate for $DOMAIN on its own and proxies
+# the WebSocket (/ws) like any other request.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy app:4000
+}

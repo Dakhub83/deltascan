@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import clsx from 'clsx';
+
+/** Gap between the menu and the viewport edge. */
+const VIEWPORT_MARGIN = 8;
 
 interface PopoverProps {
   trigger: (open: boolean) => ReactNode;
@@ -9,42 +13,70 @@ interface PopoverProps {
 }
 
 /**
- * Minimal click-to-open popover. Listens on the element's own document so it keeps
- * working inside dockview pop-out windows.
+ * Minimal click-to-open popover. The menu is portalled to the trigger's own document body:
+ * dockview panels clip their content, and pop-out windows have their own document.
  */
 export function Popover({ trigger, children, align = 'left', className }: PopoverProps) {
   const [open, setOpen] = useState(false);
+  const [style, setStyle] = useState<CSSProperties | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return setStyle(null);
+    const rect = ref.current.getBoundingClientRect();
+    const win = ref.current.ownerDocument.defaultView ?? window;
+    const top = rect.bottom + 4;
+    setStyle({
+      top,
+      maxHeight: win.innerHeight - top - VIEWPORT_MARGIN,
+      ...(align === 'right' ? { right: win.innerWidth - rect.right } : { left: rect.left }),
+    });
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
     const doc = ref.current?.ownerDocument ?? document;
+    const win = doc.defaultView ?? window;
+    const close = () => setOpen(false);
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!ref.current?.contains(target) && !menuRef.current?.contains(target)) close();
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    // A fixed-position menu would drift away from its trigger, so close instead.
+    const onScroll = (e: Event) => !menuRef.current?.contains(e.target as Node) && close();
     doc.addEventListener('mousedown', onDown);
     doc.addEventListener('keydown', onKey);
+    doc.addEventListener('scroll', onScroll, true);
+    win.addEventListener('resize', close);
     return () => {
       doc.removeEventListener('mousedown', onDown);
       doc.removeEventListener('keydown', onKey);
+      doc.removeEventListener('scroll', onScroll, true);
+      win.removeEventListener('resize', close);
     };
   }, [open]);
 
   return (
     <div ref={ref} className="relative">
       <div onClick={() => setOpen((o) => !o)}>{trigger(open)}</div>
-      {open && (
-        <div
-          className={clsx(
-            'absolute top-full z-50 mt-1 min-w-48 rounded-lg border border-line-strong bg-raised p-1 shadow-2xl shadow-black/60',
-            align === 'right' ? 'right-0' : 'left-0',
-            className,
-          )}
-        >
-          {children(() => setOpen(false))}
-        </div>
-      )}
+      {open &&
+        style &&
+        ref.current &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={style}
+            className={clsx(
+              'fixed z-50 min-w-48 overflow-y-auto overscroll-contain rounded-lg border border-line-strong bg-raised p-1 shadow-2xl shadow-black/60',
+              className,
+            )}
+          >
+            {children(() => setOpen(false))}
+          </div>,
+          ref.current.ownerDocument.body,
+        )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import type { SymbolSnapshot } from '@deltascan/shared';
 import clsx from 'clsx';
 import { fmtCompact, fmtMultiple, fmtPct, fmtPrice } from '../lib/format';
 import { useUiStore } from '../store/uiStore';
+import { STAGE_META, isLate } from './fade';
 
 type Props<V> = CustomCellRendererProps<SymbolSnapshot, V>;
 
@@ -14,6 +15,11 @@ export function SymbolCell({ data }: Props<string>) {
     <div className="flex w-full items-center gap-2 overflow-hidden" title={data.name ?? data.symbol}>
       <span className={clsx('h-3.5 w-[3px] shrink-0 rounded-full', chg > 0 ? 'bg-up' : chg < 0 ? 'bg-down' : 'bg-muted')} />
       <span className="font-semibold tracking-wide text-fg">{data.symbol}</span>
+      {data.halted && (
+        <span className="rounded bg-warn/15 px-1 text-[9px] font-bold tracking-wider text-warn ring-1 ring-warn/30 ring-inset" title="Trading halted">
+          HALT
+        </span>
+      )}
     </div>
   );
 }
@@ -78,6 +84,41 @@ export function FloatCell({ value }: Props<number | null>) {
   const low = value != null && value < 10e6;
   return (
     <span className={clsx('num w-full text-right', low ? 'font-semibold text-warn' : 'text-dim')}>{fmtCompact(value)}</span>
+  );
+}
+
+/** Setup stage badge, plus LATE when the move is old (see FADE). */
+export function StageCell({ data }: Props<number | null>) {
+  if (!data?.fade) return null;
+  const meta = STAGE_META[data.fade.stage];
+  return (
+    <span className="flex items-center gap-1">
+      <span className={clsx('rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1 ring-inset', meta.badge)}>{meta.label}</span>
+      {isLate(data) && (
+        <span className="rounded bg-muted/15 px-1 text-[9px] font-bold tracking-wider text-muted" title="Far off the high or long since it: likely the back side of the move">
+          LATE
+        </span>
+      )}
+    </span>
+  );
+}
+
+export type Tier = 'sub-dollar' | 'low-float' | 'large-cap';
+
+const TIER_META: Record<Tier, { label: string; title: string; badge: string }> = {
+  'sub-dollar': { label: 'SUB $1', title: 'Trading under $1', badge: 'bg-violet/12 text-violet ring-violet/25' },
+  'low-float': { label: 'LOW FLT', title: 'Float under 20M shares', badge: 'bg-warn/12 text-warn ring-warn/25' },
+  'large-cap': { label: 'LARGE', title: 'Market cap over $10B', badge: 'bg-accent/12 text-accent ring-accent/25' },
+};
+
+/** Quality-at-a-glance tag for momentum movers; untagged means a mid-cap. */
+export function TierCell({ value }: Props<Tier | null>) {
+  if (!value) return null;
+  const meta = TIER_META[value];
+  return (
+    <span className={clsx('rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ring-1 ring-inset', meta.badge)} title={meta.title}>
+      {meta.label}
+    </span>
   );
 }
 

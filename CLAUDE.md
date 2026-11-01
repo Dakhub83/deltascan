@@ -1,0 +1,118 @@
+# DeltaScan: notes for Claude
+
+A real-time scanner for day and swing trading, modelled on Trade Ideas, Scanz and Day Trade Dash. It's an npm-workspaces monorepo on Node ≥ 22.
+- [README.md](README.md) covers layout, quick start, the UI and Alpaca setup.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) covers the stack, design decisions, the data-feed reality check and the **step-by-step implementation plan**.
+
+## Commands
+
+```bash
+npm run dev          # server (ws://localhost:4000/ws) + web: landing http://localhost:5173, dashboard /app/, mock data
+npm run build && SERVE_WEB=true npm start   # production: the server serves the built site (docs/DEPLOY.md)
+npm test             # vitest: apps/server/test and apps/web/src/**/*.test.ts
+npm run typecheck    # all workspaces
+```
+
+## Layout in one breath
+
+- `packages/shared/src/index.ts` holds **every** type that crosses the wire (`SymbolSnapshot`, `Alert`, `ServerMessage`, …). Change it first, then fix both apps.
+- `apps/server`: provider (`alpaca` | `mock`) → `IngestionService` → `SymbolStore` (dirty set) → `AlertEngine` / `HaltTracker` → `ClientGateway` (flushes deltas every 250 ms). `src/index.ts` wires them together.
+- `apps/web`: React + dockview + AG Grid + Zustand. Ticks go into `lib/marketData.ts` and stay out of React state; they're flushed once per animation frame. Two Vite pages: `index.html` (landing, `src/landing/`) and `app/index.html` (dashboard, `src/main.tsx`); colour tokens shared in `src/theme.css`.
+- Accounts: `db/AppDb.ts` (SQLite via the built-in `node:sqlite`, loaded with `createRequire` because Vite strips the `node:` prefix; numbered `MIGRATIONS`, never edit a shipped one), `auth/Auth.ts` (scrypt, sha256-hashed session tokens in an HttpOnly cookie, sign-in rate limit), `gateway/AppApi.ts` (`/api/auth/*`, `/api/watchlist`, `/api/layouts/:name`, `/api/alerts/history`). With `AUTH_REQUIRED` off every request is the built-in local account; with it on, `/api/*` and the `/ws` upgrade need a session. `components/AuthGate.tsx` starts the data socket only once the server lets the user in.
+
+## Conventions
+
+- All scanning runs on the server. The browser only renders.
+- Alerts are edge-triggered with per-type cooldowns (`DEFAULT_COOLDOWN_MS` in `AlertEngine.ts`). Adding an `AlertType` means updating `ALERT_TYPES` in shared, the cooldown map and `apps/web/src/lib/alertMeta.ts`.
+- New env vars go in three places: `apps/server/src/config/env.ts` (zod), `.env.example` (with a comment) and the README if they're user-facing.
+- Providers emit only normalized events (`trade`, `quote`, `bar`, `seed`, `reference`, `tradingStatus`, `status`). Nothing downstream knows which provider is running.
+- Code is TypeScript strict. Keep comments sparse and only where they say *why*, and write tests next to the class they cover (`apps/server/test/<Class>.test.ts`).
+- Alpaca allows **one** stream connection per account. A second server instance gets `406 connection limit exceeded`.
+
+---
+
+## Where we left off (2026-10-24) — delete this section once it's done
+
+**Feature in progress: trading halts + 1m/5m momentum.** It's on branch `wip/halts-momentum`, committed and pushed, and doesn't typecheck yet. Merge it into `main` once the steps below are done.
+
+### Done
+- **shared**: `TradingStatus`, `HaltEvent`, `HaltState`; `halt` and `resume` alert types; `chg1mPct`, `chg5mPct` and `halted` on `SymbolSnapshot`; a `halts` field in `hello` and a new `halts` server message (upsert by id).
+- **`scanner/HaltTracker.ts`** (new): turns status messages into halt records (halted → quoting → resumed), takes the first print after resumption as the resume price and gap, and exposes `drain()` / `recent()` plus `onHalt` / `onResume` callbacks. Tests are in `test/HaltTracker.test.ts`.
+- **`SymbolStore`**: a per-second price ring buffer, `sampleMomentum()` (meant to be called every 1 s) and `setHalted()`. Tests added.
+- **`AlertEngine.raise()`** lets other components fire alerts and still respect cooldowns.
+- **Alpaca**: optional `statuses` subscription (`ALPACA_STATUSES=false` by default) and the `T:'s'` message → `haltStateOf()` mapping in `messages.ts`.
+- **Mock**: simulated LULD halts (a burst of ≥ 8 %) and news halts (T1), a quoting phase, a reopen gap, seeded earlier halts, and `MOCK_HALT_SECONDS`.
+- `IngestionService` and `ClientGateway` accept a `HaltTracker` and forward the data.
+
+- `src/index.ts` wires `HaltTracker` in (halt / resume alerts via `alerts.raise`, the countdown uses `MOCK_HALT_SECONDS` on mock) and samples momentum every second.
+- **Web**: `marketData` keeps `halts` (`onHalts` listener); `panels/HaltPanel.tsx` is in **+ Window → Halts** and is a tab next to Alerts in the default layout (a saved layout needs **Reset layout** to pick it up); HALT / RESUME chips in `alertMeta.ts`.
+- `Popover` portals to the document body and scrolls, so the dropdowns are no longer clipped by dockview panels.
+- **Mock price model**: prices mean-revert toward their seeded level (`MEAN_REVERSION`). Before this, prices compounded without limit (+10,000% within 40 min). Halts are spaced at least 2 min apart market-wide (`MIN_HALT_SPACING_MS`).
+
+- **Momentum scanner** (`presets.ts`, thresholds in `MOMENTUM`): a multi-strategy filter (up ≥ 5 %, RVOL ≥ 2×, within 2 % of HOD, rising over 5 m, not halted), sorted by 5m %. New columns are `chg1mPct`, `chg5mPct` and `tier` (SUB $1 / LOW FLT / LARGE, thresholds in `TIERS` in `columns.ts`), plus a HALT badge in the Symbol cell. On the 56-symbol mock it usually shows 0–3 rows, because most movers have pulled back from their HOD.
+
+- **Named layouts**: the Layouts menu (grid icon, top right) saves, opens, updates and deletes them, and replaces the old reset button. They're stored in `localStorage` (`deltascan.layouts.v1`) through `saveLayoutAs` / `loadLayout` / `deleteLayout` in `lib/layout.ts`. That's per browser; moving them to SQLite is part of ARCHITECTURE step 10.
+
+- **Extended hours**: `sessionClock.tradeSessionAt` / `marketSessionAt` classify by ET time (holidays aren't modelled). `SymbolStore` books pre/post prints into `pre*` / `post*` fields and `regularClose`. Those prints move `last` and `changePct` but not the regular open/high/low/volume/VWAP. NHOD / NLOD / VWAP alerts only run on regular prints. The session reaches the UI through `hello` and `stats`. The scanners are **Pre-market Gainers** and **After-hours Movers** (thresholds in `EXTENDED` in `presets.ts`). `MOCK_SESSION=pre|regular|post` picks the session the simulator runs.
+
+- **Charts**: `panels/ChartPanel.tsx` (history fetches time out after 10 s and retry, so a server restart mid-load doesn't leave a blank chart) (lightweight-charts 5.2) with calculations in `lib/chartData.ts`.
+  - `SymbolStore` builds 1-minute bars from every trade, tagged with `session` (`DEFAULT_MAX_BARS` 2,400, about 2½ days).
+  - History is served at `GET /api/bars?symbol=` (proxied by Vite). Live bars go only to clients that sent `{ type: 'chart', symbols }`.
+  - The mock emits a `history` event: the previous day's session plus today so far. Its paths pass exactly through the seeded open, high, low and last, but timestamps end at the real "now", so on mock the axis shows wall-clock times.
+  - Line series join across empty points and a segment takes its *starting* point's color, so VWAP breaks are drawn with hidden points (see `vwapPoint`).
+  - Not built yet: drawing tools, a daily timeframe (needs the REST bootstrap, ARCHITECTURE step 2), multi-pane indicators (RSI/MACD) and saved chart templates.
+
+- **Dilution window**: `panels/DilutionPanel.tsx`.
+  - Server: `fundamentals/SecClient.ts` fetches SEC EDGAR (rate-limited, 6 h cache, needs `SEC_USER_AGENT`). `fundamentals/dilution.ts` is a pure builder (tests in `test/dilution.test.ts`). The endpoint is `GET /api/dilution?symbol=`; it returns 503 when not configured and 404 for unknown tickers, including the mock's made-up ones.
+  - Score heuristics: runway is skipped for SIC 6000–6799 (financials). Prospectus and shelf filings don't count for issuers with an S-3ASR (well-known seasoned issuers, usually debt deals). Share growth is measured from the last >40 % drop, because XBRL isn't split-adjusted.
+  - Filing text: `filingsToRead` (dilution.ts) picks 8-Ks with item 5.03/3.03 and 424B prospectuses; `SecClient.filingDetails` fetches them and `parseReverseSplit` / `parseOfferingAmount` (filingText.ts) read the split ratio, effective date, shares after, and offering size. Counts before an 8-K-announced split are divided by its ratio (`shareHistory[].adjusted`) only when the counts show the drop; ratios estimated from share counts are shown but never used to adjust. The `compliance` rating comes from 8-K 3.01 notices, late filings and recent splits; the web side raises it to medium under $1 (`lib/dilutionView.ts`).
+  - Burn is trailing-twelve-month operating cash flow (last fiscal year − prior-year YTD + current YTD), falling back to the latest period; a single quarter swings with working capital. `sectorFromSic` maps the SIC code to a broad sector.
+  - The top of the tracker is a summary card laid out like the trader's reference: the name and Overall Offering Risk, then Company | Dilution Risk side by side, then Cash Position. Price, Mkt Cap and Float need the symbol in the live feed.
+  - The tracker shows the ratings grid (`components/RiskRatings.tsx`), a cash-position sentence, float/market-cap labels, China yes/no, a share-count timeline with splits, and offering amounts on the filings. Insider ownership isn't built: it isn't in SEC's structured data.
+  - **+ Window → Dilution tracker** docks it in the layout (`addDilutionWindow`: a tab beside Symbol/Chart, or on the right) and focuses an existing one instead of duplicating it. Only the double-click quote card pops out.
+
+- **Short-side tools** (the trader fades low-float runners: Spike → Extension → Rejection → Confirmation → Fade, prime window 9:30–10:30, DAS Trader Pro).
+  - `scanner/FadeDetector.ts` runs every second on completed 1-minute bars; the stage goes on `SymbolSnapshot.fade`. It fires `topping` (the starter-size signal on entering Rejection: a topping tail near the high, a reversal candle at the high closing in the bottom 30 % of a ≥ 3 % range, or a stall under it with a red bar breaking the prior low; or a gap of 15 %+ closing back under its opening price; any of them can fire from Spike, since a gap-and-fail never extends; none alert once the close is 15 %+ off the high, and a bar that cancels a top with a new high is re-checked as the next top), `rejection_confirmed`, `vwap_break` (the first 1-minute close under VWAP after the top, `FadeState.vwapBroken`, cleared by a close back over VWAP; the trader's main add), `failed_bounce` (on the backside, a bounce retracing ≥ 25 % of the drop makes a lower high under the rejection high, then a red bar breaks the prior low within 3 bars; `FadeState.lowerHigh`) and `vwap_bounce` alerts, and replays backfill silently. **`vwap_test`** anticipates the break: topped, 3 %+ off the high, a red bar closing 0–2 % over VWAP under the prior low (or with a lower high in), once per approach (`FadeState.vwapTest`; re-armed > 4 % over VWAP or by the break; chart `→VWAP`, badge `→ VWAP · ANTICIPATE`). **`backside`** is the one "start shorting" signal the trader asked for: once per setup, the first red bar closing under VWAP after the top is proven failed (a confirmed top or a lower high), 3–35 % off the high (`backsideMinOffHighPct` keeps out wiggles at the open, where VWAP sits on the price); stop = lower high, else the rejection high (`FadeState.backsideStop`). The chart draws it as a big SHORT arrow with a SHORT · RISK line and dims the other arrows.
+  - History that arrives after a symbol's first live bars (a mover added mid-day) resets the symbol and replays it, so the morning's high and setup aren't lost (`SymbolState.firstSeen`, carried across the session reset).
+  - `FadeDetector.signals(symbol)` keeps every signal it found, startup replay included (which never alerts), served at `GET /api/signals`; the chart merges it with live alerts for its markers. Bars before the overnight gap (≥ 4 h) are skipped, since today's prevClose would misjudge them. Replayed bars are judged against VWAP built from the bars (as the chart draws it), live bars against the snapshot's; a gap is measured from `snap.open`, not the first bar the server saw. Fade-signal cooldowns are 60 s: the detector only fires on a stage change.
+  - The chart draws the setup from `fade` (`lib/fadeSignals.ts`): HOD, RISK (rejection high), CONFIRMS < (rejection low) and LH · ADD RISK price lines, TOP / CONF / LH / VWAP markers from the alert feed, and a stage badge whose text and tooltip follow the trader's scale-in (`stageAdvice`): a front-side starter of `shortLimits.starterPct` (default 30 %, editable in the short calculator's limits) on the top, the rest on the VWAP break.
+  - Every stock is tracked and listed whatever its price, float or market cap (the trader asked for no floors); they narrow with the scanner's **$ Price** / **Float** buttons.
+  - Scanners are `fade-setups` and `backside-vwap`; columns are `fadeStage`, `offHighPct` and `sinceHighMin`.
+  - `panels/ShortCalcPanel.tsx` + `lib/shortPlan.ts` (tests in `shortPlan.test.ts`; the web workspace now runs vitest too). Limits live in `settings.shortLimits`; the persist `merge` layers saved settings over the defaults.
+  - Not built yet: an overhang badge and warrant/conversion price lines on the chart, a 9:30–10:30 focus highlight, UI editing of detector thresholds, and DAS position sync.
+
+- **Quote card**: `panels/QuotePanel.tsx`. Row double-click (Filter, Alert and Halt panels) calls `openQuoteFor` in `lib/layout.ts`, which pops out one window per symbol and focuses it if it already exists. The card uses the live snapshot plus `DilutionReport.ratings` / `foreignFiler` from `dilution.ts`. SSR is computed client-side (low ≤ 90 % of prevClose; carry-over from the prior day isn't tracked). Gap analysis and news aren't built yet: they need daily bars and a news feed (Alpaca has both).
+
+- **Layout files**: `saveLayoutToFile` / `loadLayoutFromText` in `lib/layout.ts`. The JSON has `{ app: 'DeltaScan', kind: 'layout', version: 1, name, savedAt, layout }`. It uses `showSaveFilePicker` when available (call it straight from the click, since it needs the user gesture) and falls back to a download. A one-line notice bar (`uiStore.showNotice`) reports results.
+
+- **Company profile & news**: `GET /api/profile` → `CompanyProfile`, served by `fundamentals/ProfileService.ts`.
+  - It merges `SecClient.profile`: description from the annual report (≤ 5 MB streamed; SEC ignores Range headers), country, incorporation, ADR from the cover page, and EX-99.1 press releases from recent 8-K / 6-K filings.
+  - Alpaca news (`AlpacaNews.ts`) is added when the Alpaca keys are set; its live behaviour hasn't been tested yet.
+  - Parsers are in `fundamentals/filingText.ts` (tests in `test/filingText.test.ts`). The web side is `components/CompanyInfo.tsx`.
+  - When editing regex-heavy files with Python, use a quoted heredoc and raw strings: `` once became a literal backspace byte.
+
+- **Tape strip** (top of the Dilution tracker): `components/TapeStrip.tsx`, with the logic in `lib/tape.ts` (`readTape`, tests in `tape.test.ts`).
+  - Minute bars come from `marketData.watchMinuteBars` / `getMinuteBars` via `useSyncExternalStore`: a shared, ref-counted store that loads history once, merges live bars and notifies at most once a second.
+  - Don't keep bar data in component refs that effects reset: under React dev double-mounting inside dockview, the visible copy froze on "Waiting for bars…".
+  - Share class (e.g. "Class A") isn't in SEC's structured data.
+
+- **Ticker tape**: `components/TickerTape.tsx` under the top bar (Settings → Display → Scrolling ticker). It scrolls with requestAnimationFrame over two copies of the list. Prices refresh every second, the symbol list (`pickTapeSymbols` in `lib/tickerTape.ts`) every 10 s. Hover pauses it, and with reduced motion it becomes a static strip you can scroll.
+
+- **Bullish scanners** (Trade Ideas-style, the early warning for future fades): New Highs on 2× RV, Up 50¢ in 5 Min, Under $20 Moving Up Fast, Turbo Breaks Up, Rallying off the Bottom. Thresholds are in `BULLISH` in `presets.ts` (tests in `presets.test.ts`); new columns `chg5mUsd` and `offLowPct`. Scans needing daily bars (yearly highs, up 5 days, MA breakouts), RSI or an earnings calendar wait on ARCHITECTURE steps 2–3.
+
+- **New highs window** (Trade Ideas' repeating New High alert window): `panels/NewHighsPanel.tsx`, logic in `lib/newHighs.ts` (tests in `newHighs.test.ts`), **+ Window → New highs (NHOD)**. Built client-side from the `new_high` alerts (one per symbol per minute at most, the cooldown). **Feed** lists every NHOD with its number that day (`# Today`) and repeats in the last 10 min (🔥 at 3+); **Leaders** keeps one row per stock, most repeats first. `Last NHOD` turns **QUIET** after 3 min without a new high once a stock pushed twice: the front side stalling, the trader's cue to watch for TOPPING. Price / Float / RVOL / Repeats filters use the live snapshot and are saved with the layout (`NewHighsPanelParams`). Counts only cover the alerts the client holds (the server's last 500 on connect).
+- **Prev Day AH Gainers** (`providers/alpaca/prevAfterHours.ts`, tests in `test/prevAfterHours.test.ts`): the free live iex feed has almost no after-hours (or pre-8 AM) trades (probed 2026-10-31: TSLA, one 443-share bar after 16:00), but the free plan serves **SIP history once 15 minutes old**. So once per completed session (`/v2/calendar`, half days included; checked every 15 min): hourly SIP bars for every listed common stock (`/v2/assets`, ~90 requests at 350 ms, about a minute), then 1-minute bars for the top candidates, leaving out the 16:00 minute (closing auction). `PrevAfterHours` rides on `ReferenceData` to `SymbolSnapshot.prevAfterHours`; the top `ALPACA_PREV_AH_TOP` become rows (with the radar only, since without it every row takes a live slot). Columns `prevAhChangePct` / `prevAhLast` / `prevAhHigh` / `prevAhVolume`. The mock gives its in-play names a run. The live Pre-market Gainers / After-hours Movers scanners stay thin on iex for the same reason.
+- **Indicators** (`scanner/indicators.ts`, tests in `test/indicators.test.ts`): RSI(14, Wilder), EMA 9/20 and the latest 9/20 cross on completed 1-minute bars, recomputed only when a bar completes, on `SymbolSnapshot.indicators`. Web: the **Indicators** toolbar button (`scanners/indicatorFilter.ts`, `FilterPanelParams.indicators`), columns `rsi14` / `emaCross` / `ema9` / `ema20`, scanners **RSI Overbought Runners** and **EMA 9/20 Bear Cross** (`INDICATOR_SCANS`).
+- **My watchlist** (`panels/WatchlistPanel.tsx`, `store/watchlistStore.ts`): saved per account; every user's symbols are `provider.track`ed (with the radar: a bar-fed row competing for a live slot). Named layouts are on the server too (`syncLayouts` in `lib/layout.ts`, a one-time upload of the old localStorage ones). Alerts are saved (`onAlerts`) and reloaded on restart (`AlertEngine.restore`).
+- **Price filter**: each scanner window has its own price range (the **$ Price** button in its toolbar), applied on top of the scanner's filter, in `FilterPanelParams.priceRange`, so it's saved with layouts. Logic and quick ranges are in `scanners/priceRange.ts`. Symbols with no price yet are hidden while a range is set. A **Float** button beside it works the same way (`FilterPanelParams.floatRange`, `scanners/floatRange.ts`; bounds typed in millions or with K/M); unknown floats pass, because the live feed has no float data yet.
+
+### Still to do (in order)
+0. **Live Alpaca data works (verified 2026-10-30 with a real free account, after the close).** REST bootstrap: `providers/alpaca/AlpacaRest.ts` (snapshots, 1Min/1Day bars with paging, screener movers) and `bootstrap.ts` (pure: `prevCloseOf`, `seedFrom` splits today's minute bars by session, `avgDailyVolume`, `isCommonStock`, `runBootstrap`; tests in `test/AlpacaBootstrap.test.ts`). Seeds on start, on reconnect and for every new symbol; adds the top gainers every `ALPACA_MOVERS_REFRESH_SEC` (asks for 50, drops warrants/rights/units by the Nasdaq fifth letter W/R/U, which crowd the list, keeps `ALPACA_MOVERS_TOP`), only ever adding. **Free iex limit, probed against the account: trades + quotes subscriptions ≤ 30 in total, bars don't count** (405 `symbol limit exceeded` otherwise), so quotes are off by default (`ALPACA_QUOTES`). **Radar** (`MoverRadar.ts`, tests in `test/MoverRadar.test.ts`, `ALPACA_RADAR` / `ALPACA_RADAR_MOVE_PCT`): the free plan accepts `bars: ['*']` next to the trade subscriptions (probed 2026-10-31), so the server sees every stock's minute bars. A move of 4 %+ either way within 5 minutes (and $5K+ traded) makes a stock a row (up to 300 a day). The live trade slots (`ALPACA_MAX_SYMBOLS`, WATCHLIST pinned) rotate to the hottest rows (`planLive`: 2 min minimum, 2-point margin); a row without a slot is fed by its bars as four prints (`barPrints`), so it never goes stale. Gainers are checked every 60 s. Blind spot: a stock with no IEX trades in a minute has no bar. Still to check during market hours: live trade flow, prevClose vs a broker (Alpaca's daily close may include after-hours), movers in pre-market. RVOL on iex can read in the hundreds for thinly traded names (iex-only volume both sides). Still missing live: float / market cap / short interest (step 4), bad-print filtering and a daily reset (steps 1–2).
+1. Run `npm test` and `npm run typecheck`, check it in the browser with `npm run dev`, then merge into `main`.
+2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
+3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
+
+Status: **tests pass (118 server, 52 web), typecheck clean.**
+
+### After this feature
+Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).

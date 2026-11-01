@@ -1,17 +1,36 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { ProviderStatus, ServerMessage } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, CompanyProfile, DilutionReport, FadeSignal, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Auth } from '../auth/Auth';
+import type { AppDb } from '../db/AppDb';
+import { handleAppApi, sendJson } from './AppApi';
+import { serveStatic } from './staticFiles';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
+import type { HaltTracker } from '../scanner/HaltTracker';
 
 export interface ClientGatewayOptions {
   port: number;
   broadcastIntervalMs: number;
   store: SymbolStore;
   alerts: AlertEngine;
+  halts: HaltTracker;
   getStatus: () => ProviderStatus | null;
-  getStats: () => { tradesPerSec: number; quotesPerSec: number; symbols: number };
+  getStats: () => ServerStats;
+  getSession: () => MarketSession;
+  /** Undefined when SEC access isn't configured (no SEC_USER_AGENT). */
+  dilution?: (symbol: string) => Promise<DilutionReport | null>;
+  /** Undefined when neither SEC nor Alpaca news is configured. */
+  profile?: (symbol: string) => Promise<CompanyProfile | null>;
+  /** Short-side signals for the chart, including ones replayed at startup without alerting. */
+  fadeSignals?: (symbol: string) => FadeSignal[];
+  /** Accounts, watchlists, layouts and alert history. Without them every endpoint is open. */
+  app?: { auth: Auth; db: AppDb; onWatch: (symbol: string) => void; trustProxy: boolean };
+  /** New alerts, once per flush (saved to the history). */
+  onAlerts?: (alerts: Alert[]) => void;
+  /** Built web app to serve (production); the Vite dev server serves it otherwise. */
+  webRoot?: string;
   logger: Logger;
 }
 
@@ -22,7 +41,12 @@ const STATS_INTERVAL_MS = 1_000;
 interface Client {
   ws: WebSocket;
   needsResync: boolean;
+  /** Symbols this client has a chart open for; they get live 1-minute bars. */
+  charts: Set<string>;
 }
+
+/** Caps a client's chart subscriptions so a bad message can't make every flush fan out. */
+const MAX_CHARTS_PER_CLIENT = 50;
 
 /**
  * Pushes batched deltas to UI clients over WebSocket (`/ws`).
@@ -39,15 +63,55 @@ export class ClientGateway {
   constructor(private readonly opts: ClientGatewayOptions) {
     this.log = opts.logger.child({ component: 'gateway' });
     this.http = createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
-        return;
-      }
-      res.writeHead(404).end();
+      this.route(req, res).catch((err: Error) => {
+        this.log.error({ err: err.message, path: req.url }, 'request failed');
+        if (!res.headersSent) sendJson(res, 500, { error: 'Server error' });
+      });
     });
-    this.wss = new WebSocketServer({ server: this.http, path: '/ws', perMessageDeflate: false });
+    this.wss = new WebSocketServer({
+      server: this.http,
+      path: '/ws',
+      perMessageDeflate: false,
+      verifyClient: (info: { req: IncomingMessage }) => !opts.app || opts.app.auth.userFor(info.req) !== null,
+    });
     this.wss.on('connection', (ws) => this.onConnection(ws));
+  }
+
+  private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const opts = this.opts;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (opts.app && (await handleAppApi(req, res, url, { ...opts.app }))) return;
+    if (url.pathname.startsWith('/api/') && opts.app && !opts.app.auth.userFor(req)) {
+      sendJson(res, 401, { error: 'Sign in first' });
+      return;
+    }
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
+      return;
+    }
+    if (url.pathname === '/api/dilution') {
+      this.serveLookup(opts.dilution, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'SEC_USER_AGENT is not set');
+      return;
+    }
+    if (url.pathname === '/api/profile') {
+      this.serveLookup(opts.profile, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'Set SEC_USER_AGENT (and optionally Alpaca keys)');
+      return;
+    }
+    if (url.pathname === '/api/bars') {
+      const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(opts.store.getBars(symbol)));
+      return;
+    }
+    if (url.pathname === '/api/signals') {
+      const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(opts.fadeSignals?.(symbol) ?? []));
+      return;
+    }
+    if (opts.webRoot && (req.method === 'GET' || req.method === 'HEAD') && serveStatic(opts.webRoot, url.pathname, res)) return;
+    res.writeHead(404).end();
   }
 
   start(): void {
@@ -72,7 +136,7 @@ export class ClientGateway {
   }
 
   private onConnection(ws: WebSocket): void {
-    const client: Client = { ws, needsResync: false };
+    const client: Client = { ws, needsResync: false, charts: new Set() };
     this.clients.add(client);
     this.log.info({ clients: this.clients.size }, 'client connected');
     this.sendHello(client);
@@ -82,6 +146,20 @@ export class ClientGateway {
       this.log.info({ clients: this.clients.size }, 'client disconnected');
     });
     ws.on('error', (err) => this.log.warn({ err: err.message }, 'client socket error'));
+    ws.on('message', (raw) => this.onClientMessage(client, raw.toString()));
+  }
+
+  private onClientMessage(client: Client, raw: string): void {
+    let msg: ClientMessage;
+    try {
+      msg = JSON.parse(raw) as ClientMessage;
+    } catch {
+      return;
+    }
+    if (msg.type === 'chart' && Array.isArray(msg.symbols)) {
+      const symbols = msg.symbols.filter((s): s is string => typeof s === 'string').slice(0, MAX_CHARTS_PER_CLIENT);
+      client.charts = new Set(symbols.map((s) => s.toUpperCase()));
+    }
   }
 
   private sendHello(client: Client): void {
@@ -90,7 +168,9 @@ export class ClientGateway {
       data: {
         snapshots: this.opts.store.all().map((s) => ({ ...s })),
         alerts: this.opts.alerts.recent(),
+        halts: this.opts.halts.recent(),
         status: this.opts.getStatus(),
+        session: this.opts.getSession(),
         serverTime: Date.now(),
       },
     };
@@ -101,8 +181,43 @@ export class ClientGateway {
   private flush(): void {
     const snapshots = this.opts.store.drainDirty();
     const alerts = this.opts.alerts.drain();
+    const halts = this.opts.halts.drain();
     if (snapshots.length) this.broadcast({ type: 'snapshots', data: snapshots });
-    if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
+    if (snapshots.length) this.sendChartBars(snapshots.map((s) => s.symbol));
+    if (halts.length) this.broadcast({ type: 'halts', data: halts });
+    if (alerts.length) {
+      this.broadcast({ type: 'alerts', data: alerts });
+      this.opts.onAlerts?.(alerts);
+    }
+  }
+
+  /** Symbol lookups backed by SEC / Alpaca: 503 when not configured, 404 for unknown tickers. */
+  private serveLookup<T>(lookup: ((symbol: string) => Promise<T | null>) | undefined, symbol: string, res: ServerResponse, setupError: string): void {
+    const send = (status: number, body: unknown) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    if (!lookup) return send(503, { error: setupError, setup: true });
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol)) return send(400, { error: 'invalid symbol' });
+    lookup(symbol)
+      .then((value) => (value ? send(200, value) : send(404, { error: `No filings or news for ${symbol}` })))
+      .catch((err: Error) => {
+        this.log.warn({ symbol, err: err.message }, 'lookup failed');
+        send(502, { error: 'SEC EDGAR request failed' });
+      });
+  }
+
+  /** Live bar updates go only to clients charting that symbol. */
+  private sendChartBars(changed: string[]): void {
+    for (const client of this.clients) {
+      if (!client.charts.size || client.needsResync || client.ws.readyState !== WebSocket.OPEN) continue;
+      const bars: Bar[] = [];
+      for (const symbol of changed) {
+        const bar = client.charts.has(symbol) ? this.opts.store.lastBar(symbol) : undefined;
+        if (bar) bars.push({ ...bar });
+      }
+      if (bars.length) client.ws.send(JSON.stringify({ type: 'bars', data: bars } satisfies ServerMessage));
+    }
   }
 
   private broadcast(msg: ServerMessage): void {

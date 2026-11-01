@@ -7,6 +7,7 @@ import type {
   ReferenceData,
   SessionSeed,
   Trade,
+  TradingStatus,
 } from '@deltascan/shared';
 
 export type ProviderEvents = {
@@ -16,6 +17,10 @@ export type ProviderEvents = {
   /** Today's session-to-date state, emitted before streaming (snapshot bootstrap). */
   seed: [seed: SessionSeed];
   reference: [ref: ReferenceData];
+  /** One symbol's recent 1-minute bars, oldest first (startup backfill). */
+  history: [symbol: string, bars: Bar[]];
+  /** Exchange trading status: halts, quotation-only, resumptions. */
+  tradingStatus: [status: TradingStatus];
   status: [status: ProviderStatus];
 };
 
@@ -34,6 +39,14 @@ export abstract class MarketDataProvider extends EventEmitter<ProviderEvents> {
     const added = symbols.map((s) => s.toUpperCase()).filter((s) => !this.subscribed.has(s));
     added.forEach((s) => this.subscribed.add(s));
     if (added.length) this.onSubscribe(added);
+  }
+
+  /**
+   * Keeps symbols in the feed (watchlists). A provider with a tight symbol limit may follow them
+   * less closely than `subscribe`d ones; by default it's the same thing.
+   */
+  track(symbols: string[]): void {
+    this.subscribe(symbols);
   }
 
   unsubscribe(symbols: string[]): void {

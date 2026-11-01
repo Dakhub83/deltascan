@@ -1,0 +1,489 @@
+import type { DilutionFiling, DilutionFilingKind, DilutionReport, OfferingAmount, ReportedValue, ReverseSplit, RiskLevel, RiskReason } from '@deltascan/shared';
+
+/** The parts of SEC's companyfacts JSON we read. Dimensional facts aren't included in it. */
+export interface CompanyFacts {
+  facts: Record<string, Record<string, { units: Record<string, FactPoint[]> }>>;
+}
+
+export interface FactPoint {
+  start?: string;
+  end: string;
+  val: number;
+  accn: string;
+  form: string;
+  filed: string;
+}
+
+/** The parts of SEC's submissions JSON we read. `filings.recent` arrays are parallel, newest first. */
+export interface Submissions {
+  name: string;
+  sic?: string;
+  exchanges?: string[];
+  sicDescription?: string;
+  addresses?: Partial<Record<'business' | 'mailing', { stateOrCountry?: string | null; stateOrCountryDescription?: string | null }>>;
+  stateOfIncorporation?: string;
+  stateOfIncorporationDescription?: string;
+  filings: {
+    recent: {
+      form: string[];
+      filingDate: string[];
+      /** ISO timestamp the filing was accepted; more precise than filingDate. */
+      acceptanceDateTime?: string[];
+      items: string[];
+      accessionNumber: string[];
+      primaryDocument: string[];
+    };
+  };
+}
+
+/** What SecClient read from individual filings' text, keyed by filing URL. */
+export interface FilingDetails {
+  splits: Map<string, { ratio: number | null; effective: string | null; sharesAfter: number | null }>;
+  amounts: Map<string, OfferingAmount>;
+}
+
+const DAY_MS = 86_400_000;
+const MONTH_DAYS = 30.44;
+/** Balance-sheet items older than this are too stale to show. */
+const STALE_DAYS = 18 * 30;
+/** A cover-page share count falling by more than this is almost always a reverse split. */
+const REVERSE_SPLIT_DROP = 0.4;
+const SPLIT_YEARS = 2;
+/** Ratios companies actually use; an estimate from share counts snaps to the nearest one. */
+const COMMON_RATIOS = [2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 35, 40, 50, 60, 70, 75, 80, 100, 150, 200, 250];
+
+const time = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const daysBetween = (a: string, b: number) => (b - time(a)) / DAY_MS;
+
+function points(facts: CompanyFacts, ns: string, tag: string, unit: string): FactPoint[] {
+  return facts.facts[ns]?.[tag]?.units[unit] ?? [];
+}
+
+/** Later filings restate earlier periods; keep the most recently filed value for each period end. */
+function byPeriodEnd(pts: FactPoint[]): FactPoint[] {
+  const latest = new Map<string, FactPoint>();
+  for (const p of pts) {
+    const cur = latest.get(p.end);
+    if (!cur || p.filed > cur.filed) latest.set(p.end, p);
+  }
+  return [...latest.values()].sort((a, b) => a.end.localeCompare(b.end));
+}
+
+/** The latest value across `tags`, preferring earlier tags when period ends tie. */
+function latestOf(facts: CompanyFacts, tags: string[], unit: string, now: number): ReportedValue | null {
+  let best: FactPoint | null = null;
+  for (const tag of tags) {
+    const last = byPeriodEnd(points(facts, 'us-gaap', tag, unit)).at(-1);
+    if (last && (!best || last.end > best.end)) best = last;
+  }
+  if (!best || daysBetween(best.end, now) > STALE_DAYS) return null;
+  return toReported(best);
+}
+
+const toReported = (p: FactPoint): ReportedValue => ({ value: p.val, asOf: p.end, form: p.form, filed: p.filed });
+
+/** Cover-page share counts. Multi-class issuers report one value per class in the same filing, so those are summed. */
+function shareHistory(facts: CompanyFacts): FactPoint[] {
+  let pts = points(facts, 'dei', 'EntityCommonStockSharesOutstanding', 'shares');
+  if (!pts.length) pts = points(facts, 'us-gaap', 'CommonStockSharesOutstanding', 'shares');
+  const perFiling = new Map<string, FactPoint>();
+  for (const p of pts) {
+    const key = `${p.accn}|${p.end}`;
+    const cur = perFiling.get(key);
+    perFiling.set(key, cur ? { ...cur, val: cur.val + p.val } : { ...p });
+  }
+  return byPeriodEnd([...perFiling.values()]);
+}
+
+function shareGrowth(history: FactPoint[], now: number) {
+  const latest = history.at(-1);
+  if (!latest || history.length < 2) return { pct: null, since: null, reverseSplit: null };
+  let reverseSplit: string | null = null;
+  let baseIndex = 0;
+  for (let i = 1; i < history.length; i++) {
+    if (history[i]!.val < history[i - 1]!.val * (1 - REVERSE_SPLIT_DROP)) {
+      baseIndex = i;
+      reverseSplit = history[i]!.end;
+    }
+  }
+  // Compare with the count about a year ago, but never across a reverse split.
+  const yearAgo = history.findLastIndex((p) => daysBetween(p.end, now) >= 365);
+  baseIndex = Math.max(baseIndex, yearAgo);
+  const base = history[baseIndex]!;
+  if (base === latest) return { pct: null, since: null, reverseSplit };
+  const recentSplit = reverseSplit && daysBetween(reverseSplit, now) <= 2 * 365 ? reverseSplit : null;
+  return { pct: (latest.val / base.val - 1) * 100, since: base.end, reverseSplit: recentSplit };
+}
+
+/**
+ * Divides counts before each reverse split announced with a ratio by that ratio, when the counts show
+ * the drop right after the split date. Returns the adjusted counts and the indexes of explained drops.
+ */
+function splitAdjust(history: FactPoint[], splits: ReverseSplit[]) {
+  const factor = history.map(() => 1);
+  const explained = new Set<number>();
+  for (const s of [...splits].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (!s.ratio || s.source !== 'filing') continue;
+    const i = history.findIndex((p) => p.end >= s.date);
+    if (i <= 0 || history[i]!.val >= history[i - 1]!.val * (1 - REVERSE_SPLIT_DROP)) continue;
+    for (let j = 0; j < i; j++) factor[j]! *= s.ratio;
+    explained.add(i);
+  }
+  return { adjusted: history.map((p, j) => ({ ...p, val: p.val / factor[j]! })), explained };
+}
+
+function estimateRatio(before: number, after: number): number | null {
+  const raw = before / after;
+  const nearest = COMMON_RATIOS.reduce((best, r) => (Math.abs(r - raw) < Math.abs(best - raw) ? r : best));
+  return Math.abs(nearest - raw) / nearest <= 0.25 ? nearest : null;
+}
+
+/** Splits announced in 8-Ks, merged with sharp share-count drops no filing accounts for. Newest first. */
+function reverseSplits(subs: Submissions, cik: string, history: FactPoint[], details: FilingDetails, now: number): ReverseSplit[] {
+  const r = subs.filings.recent;
+  const fromFilings: ReverseSplit[] = [];
+  for (let i = 0; i < r.form.length; i++) {
+    if (daysBetween(r.filingDate[i]!, now) > SPLIT_YEARS * 365) break;
+    const url = filingUrl(cik, subs, i);
+    const parsed = details.splits.get(url);
+    if (!parsed) continue;
+    const date = parsed.effective ?? r.filingDate[i]!;
+    // An announcement and its amendment describe the same split; keep the one with more detail.
+    const dup = fromFilings.findIndex((s) => Math.abs(time(s.date) - time(date)) <= 30 * DAY_MS);
+    const split: ReverseSplit = { date, ratio: parsed.ratio, source: 'filing', sharesAfter: parsed.sharesAfter, url };
+    if (dup === -1) fromFilings.push(split);
+    else if (!fromFilings[dup]!.ratio && split.ratio) fromFilings[dup] = split;
+  }
+
+  const fromCounts: ReverseSplit[] = [];
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1]!;
+    const cur = history[i]!;
+    if (cur.val >= prev.val * (1 - REVERSE_SPLIT_DROP) || daysBetween(cur.end, now) > SPLIT_YEARS * 365) continue;
+    if (fromFilings.some((s) => s.date > prev.end && s.date <= cur.end)) continue;
+    fromCounts.push({ date: cur.end, ratio: estimateRatio(prev.val, cur.val), source: 'share-count', sharesAfter: null, url: null });
+  }
+  return [...fromFilings, ...fromCounts].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const yearEarlier = (date: string) => `${Number(date.slice(0, 4)) - 1}${date.slice(4)}`;
+const monthsIn = (p: FactPoint) => (time(p.end) - time(p.start!)) / DAY_MS / MONTH_DAYS;
+
+/**
+ * Monthly operating cash burn over the trailing twelve months: the last fiscal year, minus last
+ * year's year-to-date, plus this year's. A single quarter or half swings with working capital
+ * (a company selling down inventory can look cash-neutral while losing money), so the latest
+ * year-to-date figure is only the fallback.
+ */
+function burn(facts: CompanyFacts) {
+  const ocf = byPeriod(points(facts, 'us-gaap', 'NetCashProvidedByUsedInOperatingActivities', 'USD').filter((p) => p.start));
+  // Latest period end; for ties (e.g. a 10-K's year vs. quarter), the longer period.
+  const last = ocf.reduce<FactPoint | null>((best, p) => (!best || p.end > best.end || (p.end === best.end && p.start! < best.start!) ? p : best), null);
+  if (!last) return null;
+  const months = monthsIn(last);
+  if (months < 11) {
+    const fiscalYear = ocf.find((p) => p.end === isoDay(time(last.start!) - DAY_MS) && Math.abs(monthsIn(p) - 12) < 1);
+    const priorYtd = ocf.find((p) => p.start === yearEarlier(last.start!) && p.end === yearEarlier(last.end));
+    if (fiscalYear && priorYtd) {
+      const ttm = fiscalYear.val - priorYtd.val + last.val;
+      return { monthly: -ttm / 12, start: isoDay(time(priorYtd.end) + DAY_MS), end: last.end };
+    }
+  }
+  return { monthly: -last.val / Math.max(1, months), start: last.start!, end: last.end };
+}
+
+/** Later filings restate earlier periods; keep the most recently filed value for each start–end pair. */
+function byPeriod(pts: FactPoint[]): FactPoint[] {
+  const latest = new Map<string, FactPoint>();
+  for (const p of pts) {
+    const key = `${p.start}|${p.end}`;
+    const cur = latest.get(key);
+    if (!cur || p.filed > cur.filed) latest.set(key, p);
+  }
+  return [...latest.values()];
+}
+
+/** SEC industry code → broad sector, roughly as GICS groups them. */
+export function sectorFromSic(sic: string | undefined): string | null {
+  const c = Number(sic);
+  if (!sic || !Number.isFinite(c) || c === 0) return null;
+  const within = (lo: number, hi: number) => c >= lo && c <= hi;
+  if (c === 6770) return 'Blank check (SPAC)';
+  if (within(100, 999)) return 'Consumer Staples';
+  if (within(1300, 1399) || within(2900, 2999)) return 'Energy';
+  if (within(1000, 1499)) return 'Materials';
+  if (within(1500, 1799)) return 'Industrials';
+  if (within(2000, 2199)) return 'Consumer Staples';
+  if (within(2200, 2399) || within(2500, 2599)) return 'Consumer Discretionary';
+  if (within(2700, 2799)) return 'Communication Services';
+  if (within(2830, 2836)) return 'Health Care';
+  if (within(2840, 2844)) return 'Consumer Staples';
+  if (within(2400, 3399)) return 'Materials';
+  if (within(3570, 3579) || within(3600, 3629) || within(3640, 3699) || within(3800, 3839)) return 'Information Technology';
+  if (within(3630, 3639) || within(3711, 3716) || within(3750, 3751) || within(3860, 3999)) return 'Consumer Discretionary';
+  if (within(3840, 3851)) return 'Health Care';
+  if (within(3400, 3999) || within(4000, 4799)) return 'Industrials';
+  if (within(4800, 4899)) return 'Communication Services';
+  if (within(4900, 4999)) return 'Utilities';
+  if (within(5120, 5122)) return 'Health Care';
+  if (within(5000, 5199)) return 'Industrials';
+  if (within(5400, 5499) || c === 5912) return 'Consumer Staples';
+  if (within(5200, 5999)) return 'Consumer Discretionary';
+  if (within(6500, 6553) || c === 6798) return 'Real Estate';
+  if (within(6000, 6799)) return 'Financials';
+  if (within(7370, 7379)) return 'Information Technology';
+  if (within(7800, 7999) || within(7810, 7819)) return 'Communication Services';
+  if (within(8000, 8099) || within(8730, 8731)) return 'Health Care';
+  if (within(7000, 7299) || within(8200, 8299)) return 'Consumer Discretionary';
+  if (within(7300, 8999)) return 'Industrials';
+  return null;
+}
+
+/** Convertible debt: a total tag if reported, otherwise current + noncurrent, all at the latest period end. */
+function convertibleDebt(facts: CompanyFacts, now: number): ReportedValue | null {
+  const totals = ['ConvertibleNotesPayable', 'ConvertibleDebt'];
+  const parts = ['ConvertibleNotesPayableCurrent', 'ConvertibleDebtCurrent', 'ConvertibleDebtNoncurrent', 'ConvertibleLongTermNotesPayable'];
+  const lastOf = (tag: string) => byPeriodEnd(points(facts, 'us-gaap', tag, 'USD')).at(-1);
+  const all = [...totals, ...parts].map(lastOf).filter((p): p is FactPoint => !!p);
+  if (!all.length) return null;
+  const end = all.reduce((m, p) => (p.end > m ? p.end : m), '');
+  if (daysBetween(end, now) > STALE_DAYS) return null;
+  const total = totals.map(lastOf).find((p) => p?.end === end);
+  if (total) return total.val > 0 ? toReported(total) : null;
+  const atEnd = parts.map(lastOf).filter((p): p is FactPoint => p?.end === end);
+  const sum = atEnd.reduce((s, p) => s + p.val, 0);
+  return sum > 0 ? { ...toReported(atEnd[0]!), value: sum } : null;
+}
+
+const REGISTRATIONS = /^(S-1|F-1|S-3|F-3|S-3ASR)(\/A)?$/;
+const PROSPECTUS = /^424B[1-8]$/;
+
+/** 8-K items that matter for dilution, most significant first. */
+const CHARTER_LABEL = 'Charter amendment (often a reverse split)';
+const EIGHT_K_ITEMS: { item: string; kind: DilutionFilingKind; label: string }[] = [
+  { item: '3.01', kind: 'delisting', label: 'Listing deficiency or delisting notice' },
+  { item: '3.02', kind: 'equity-sale', label: 'Unregistered sale of equity' },
+  { item: '5.03', kind: 'reverse-split', label: CHARTER_LABEL },
+  { item: '1.01', kind: 'agreement', label: 'Material agreement (often a financing)' },
+];
+
+function classify(form: string, items: string): { kind: DilutionFilingKind; label: string } | null {
+  if (REGISTRATIONS.test(form)) {
+    return form.startsWith('S-3') || form.startsWith('F-3')
+      ? { kind: 'registration', label: 'Shelf registration (lets the company sell shares later)' }
+      : { kind: 'registration', label: 'Registration statement (offering or resale)' };
+  }
+  if (PROSPECTUS.test(form)) {
+    return form === '424B5'
+      ? { kind: 'offering', label: 'Prospectus supplement (shelf takedown or ATM)' }
+      : { kind: 'offering', label: 'Prospectus (offering or resale)' };
+  }
+  if (form === 'EFFECT') return { kind: 'effective', label: 'Registration declared effective (shares can now be sold)' };
+  if (form === 'S-8' || form === 'S-8 POS') return { kind: 'comp-plan', label: 'Shares registered for a compensation plan' };
+  if (/^NT (10-K|10-Q|20-F)/.test(form)) return { kind: 'late', label: 'Late filing notice' };
+  if (form === '8-K' || form === '8-K/A') {
+    const found = EIGHT_K_ITEMS.filter((e) => items.split(',').includes(e.item));
+    if (found.length) return { kind: found[0]!.kind, label: found.map((f) => f.label).join(' · ') };
+  }
+  return null;
+}
+
+export const filingUrl = (cik: string, subs: Submissions, i: number) => {
+  const r = subs.filings.recent;
+  return `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${r.accessionNumber[i]!.replaceAll('-', '')}/${r.primaryDocument[i]}`;
+};
+
+const MAX_SPLIT_FILINGS = 6;
+const MAX_PROSPECTUSES = 8;
+
+/** Filings whose text is worth reading: 8-Ks that may announce a reverse split, and recent prospectuses. */
+export function filingsToRead(subs: Submissions, cik: string, now = Date.now()): { url: string; read: 'split' | 'offering' }[] {
+  const r = subs.filings.recent;
+  const out: { url: string; read: 'split' | 'offering' }[] = [];
+  let splits = 0;
+  let prospectuses = 0;
+  for (let i = 0; i < r.form.length; i++) {
+    const age = daysBetween(r.filingDate[i]!, now);
+    if (age > SPLIT_YEARS * 365) break;
+    const items = (r.items[i] ?? '').split(',');
+    if (r.form[i]!.startsWith('8-K') && (items.includes('5.03') || items.includes('3.03')) && splits < MAX_SPLIT_FILINGS) {
+      splits++;
+      out.push({ url: filingUrl(cik, subs, i), read: 'split' });
+    } else if (PROSPECTUS.test(r.form[i]!) && age <= 365 && prospectuses < MAX_PROSPECTUSES) {
+      prospectuses++;
+      out.push({ url: filingUrl(cik, subs, i), read: 'offering' });
+    }
+  }
+  return out;
+}
+
+function recentFilings(subs: Submissions, cik: string, now: number): (DilutionFiling & { items: string })[] {
+  const r = subs.filings.recent;
+  const out: (DilutionFiling & { items: string })[] = [];
+  for (let i = 0; i < r.form.length; i++) {
+    const filed = r.filingDate[i]!;
+    if (daysBetween(filed, now) > 365) break;
+    const c = classify(r.form[i]!, r.items[i] ?? '');
+    if (!c) continue;
+    out.push({ form: r.form[i]!, filed, items: r.items[i] ?? '', ...c, url: filingUrl(cik, subs, i) });
+  }
+  return out;
+}
+
+const fmtM = (n: number) =>
+  Math.abs(n) >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : Math.abs(n) >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}K`;
+
+/** SIC 6000–6799: banks, lenders, insurers. Their operating cash flow includes loans made, so "burn" isn't burn. */
+const isFinancial = (sic: string | undefined) => sic !== undefined && Number(sic) >= 6000 && Number(sic) < 6800;
+
+const NO_DETAILS: FilingDetails = { splits: new Map(), amounts: new Map() };
+const ratioText = (n: number) => `1-for-${n}`;
+
+export function buildDilutionReport(
+  symbol: string,
+  cik: string,
+  facts: CompanyFacts,
+  subs: Submissions,
+  details: FilingDetails = NO_DETAILS,
+  now = Date.now(),
+): DilutionReport {
+  const history = shareHistory(facts);
+  const latestShares = history.at(-1);
+  const sharesOutstanding = latestShares && daysBetween(latestShares.end, now) <= STALE_DAYS ? toReported(latestShares) : null;
+  const splits = reverseSplits(subs, cik, history, details, now);
+  const { adjusted, explained } = splitAdjust(history, splits);
+  const growth = shareGrowth(adjusted, now);
+  const growthSplitAdjusted = growth.since !== null && [...explained].some((i) => history[i]!.end > growth.since!);
+  const suspectedSplit = shareGrowth(history, now).reverseSplit;
+  const cash = latestOf(facts, ['CashAndCashEquivalentsAtCarryingValue', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents', 'Cash'], 'USD', now);
+  const financial = isFinancial(subs.sic);
+  const b = financial ? null : burn(facts);
+  const burnRecent = b && daysBetween(b.end, now) <= STALE_DAYS ? b : null;
+  const cashFlowPositive = burnRecent !== null && burnRecent.monthly <= 0;
+  const monthlyBurn = burnRecent && burnRecent.monthly > 0 ? burnRecent.monthly : null;
+  const runwayMonths = cash && monthlyBurn ? cash.value / monthlyBurn : null;
+  const warrants = latestOf(facts, ['ClassOfWarrantOrRightOutstanding'], 'shares', now);
+  const preferred = latestOf(facts, ['PreferredStockSharesOutstanding'], 'shares', now);
+  const preferredShares = preferred && preferred.value > 0 ? preferred : null;
+  const convertible = convertibleDebt(facts, now);
+
+  // Only well-known seasoned issuers (≥ $700M float) may file automatic shelves (S-3ASR). Their
+  // prospectus filings are usually debt deals, so they don't count toward the score.
+  const wellKnownIssuer = subs.filings.recent.form.includes('S-3ASR');
+  const filings = recentFilings(subs, cik, now).map((f) => {
+    let out = wellKnownIssuer && (f.kind === 'offering' || f.kind === 'registration') ? { ...f, label: `${f.label} · large issuer, often debt` } : f;
+    if (f.kind === 'offering') out = { ...out, amount: details.amounts.get(f.url) ?? null };
+    const split = splits.find((s) => s.url === f.url);
+    if (split?.ratio) {
+      // The 8-K may carry other items too (often a deficiency notice); name the split without losing them.
+      const text = `${ratioText(split.ratio)} reverse split${split.date !== f.filed ? `, effective ${split.date}` : ''}`;
+      const label = out.label.includes(CHARTER_LABEL) ? out.label.replace(CHARTER_LABEL, text) : `${out.label} · ${text}`;
+      out = { ...out, label };
+    }
+    return out;
+  });
+  const within = (days: number) => filings.filter((f) => daysBetween(f.filed, now) <= days);
+  const equitySalesSinceBalanceSheet = cash
+    ? filings.filter((f) => f.form.startsWith('8-K') && f.items.split(',').includes('3.02') && f.filed > cash.asOf).length
+    : 0;
+
+  const reasons: RiskReason[] = [];
+  const add = (points: number, text: string) => points > 0 && reasons.push({ points, text });
+
+  if (runwayMonths !== null && cash) {
+    const left = runwayMonths - daysBetween(cash.asOf, now) / MONTH_DAYS;
+    const runwayText = `${fmtM(cash.value)} cash at ${fmtM(monthlyBurn!)}/month burn`;
+    if (left < 6) add(3, `Under 6 months of cash left (${runwayText}, as of ${cash.asOf})`);
+    else if (left < 12) add(2, `Under 12 months of cash left (${runwayText})`);
+    else if (left < 24) add(1, `Under 24 months of cash left (${runwayText})`);
+  } else if (!cashFlowPositive && !financial) {
+    add(1, 'No recent cash or cash-flow figures to judge runway');
+  }
+
+  const offerings = wellKnownIssuer
+    ? []
+    : within(182).filter((f) => f.kind === 'offering' || (f.kind === 'registration' && !f.form.startsWith('S-3') && !f.form.startsWith('F-3')));
+  if (offerings.length) add(2, `${offerings.length} offering or resale filing${offerings.length > 1 ? 's' : ''} in the last 6 months`);
+  if (within(182).some((f) => f.kind === 'effective')) add(1, 'A registration went effective in the last 6 months (registered shares can be sold)');
+  if (!wellKnownIssuer && filings.some((f) => f.form.startsWith('S-3') || f.form.startsWith('F-3'))) add(1, 'Shelf registration filed in the last year');
+
+  const equitySales = within(182).filter((f) => f.form.startsWith('8-K') && f.items.split(',').includes('3.02')).length;
+  if (equitySales >= 3) add(2, `${equitySales} unregistered equity sales (8-K 3.02) in the last 6 months`);
+  else if (equitySales > 0) add(1, `${equitySales} unregistered equity sale${equitySales > 1 ? 's' : ''} (8-K 3.02) in the last 6 months`);
+
+  const adj = growthSplitAdjusted ? ', split-adjusted' : '';
+  if (growth.pct !== null && growth.pct > 50) add(2, `Share count up ${Math.round(growth.pct)}% since ${growth.since}${adj}`);
+  else if (growth.pct !== null && growth.pct > 20) add(1, `Share count up ${Math.round(growth.pct)}% since ${growth.since}${adj}`);
+  const lastSplit = splits[0];
+  const recentSplit = lastSplit !== undefined && daysBetween(lastSplit.date, now) <= 365;
+  if (recentSplit) add(1, lastSplit.ratio ? `${ratioText(lastSplit.ratio)} reverse split on ${lastSplit.date}` : `Likely reverse split around ${lastSplit.date}`);
+
+  if (warrants && sharesOutstanding && warrants.value >= sharesOutstanding.value * 0.1) {
+    add(1, `Warrants equal to ${Math.round((warrants.value / sharesOutstanding.value) * 100)}% of shares outstanding`);
+  }
+  if (convertible) add(1, `${fmtM(convertible.value)} of convertible debt (can convert into shares)`);
+  if (filings.some((f) => f.kind === 'delisting')) add(1, 'Listing deficiency or delisting notice in the last year');
+  if (filings.some((f) => f.kind === 'late')) add(1, 'Filed a late-filing notice in the last year');
+
+  reasons.sort((a, b) => b.points - a.points);
+  const score = Math.min(10, reasons.reduce((s, r) => s + r.points, 0));
+
+  const level = (value: number, medium: number, high: number): RiskLevel => (value >= high ? 'high' : value >= medium ? 'medium' : 'low');
+  const offeringsYear = wellKnownIssuer ? [] : filings.filter((f) => f.kind === 'offering' || f.kind === 'effective');
+  const dilutiveEvents = offeringsYear.length + filings.filter((f) => f.kind === 'equity-sale').length;
+  const remainingRunway = runwayMonths !== null && cash ? runwayMonths - daysBetween(cash.asOf, now) / MONTH_DAYS : null;
+  const delistings = filings.filter((f) => f.kind === 'delisting');
+  const ratings: DilutionReport['ratings'] = {
+    offering:
+      offerings.length >= 2 || within(182).some((f) => f.kind === 'effective')
+        ? 'high'
+        : offeringsYear.length || (!wellKnownIssuer && filings.some((f) => f.form.startsWith('S-3') || f.form.startsWith('F-3')))
+          ? 'medium'
+          : 'low',
+    dilution: growth.pct === null ? null : level(growth.pct, 20, 50),
+    frequency: level(dilutiveEvents, 2, 6),
+    cashNeed: financial ? null : cashFlowPositive ? 'low' : remainingRunway === null ? null : remainingRunway < 6 ? 'high' : remainingRunway < 12 ? 'medium' : 'low',
+    warrants: !warrants ? 'low' : sharesOutstanding ? level(warrants.value / sharesOutstanding.value, 0.05, 0.2) : null,
+    // Exchange deficiency notices (8-K 3.01); late filings and reverse splits usually travel with them.
+    compliance:
+      delistings.some((f) => daysBetween(f.filed, now) <= 182) || delistings.length >= 2
+        ? 'high'
+        : delistings.length || filings.some((f) => f.kind === 'late') || recentSplit
+          ? 'medium'
+          : 'low',
+  };
+  const foreignFiler = subs.filings.recent.form.some((f) => /^(20-F|40-F|6-K)/.test(f));
+
+  return {
+    symbol,
+    cik,
+    name: subs.name,
+    exchange: subs.exchanges?.[0] ?? null,
+    industry: subs.sicDescription || null,
+    sector: sectorFromSic(subs.sic),
+    location: subs.addresses?.business?.stateOrCountryDescription ?? null,
+    sharesOutstanding,
+    shareHistory: history.map((p, i) => ({ asOf: p.end, value: p.val, adjusted: adjusted[i]!.val })).slice(-12),
+    shareGrowthPct: growth.pct,
+    shareGrowthSince: growth.since,
+    shareGrowthSplitAdjusted: growthSplitAdjusted,
+    reverseSplits: splits,
+    reverseSplitSuspected: suspectedSplit,
+    cash,
+    monthlyBurn,
+    burnPeriod: burnRecent ? { start: burnRecent.start, end: burnRecent.end } : null,
+    cashFlowPositive,
+    runwayMonths,
+    financial,
+    warrants,
+    preferredShares,
+    convertibleDebt: convertible,
+    filings: filings.map(({ items: _items, ...f }) => f),
+    equitySalesSinceBalanceSheet,
+    risk: { score, level: score >= 7 ? 'high' : score >= 4 ? 'medium' : 'low', reasons },
+    ratings,
+    foreignFiler,
+    fetchedAt: now,
+  };
+}

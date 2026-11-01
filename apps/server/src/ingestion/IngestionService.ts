@@ -3,8 +3,12 @@ import type { Env } from '../config/env';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine, PriorState } from '../scanner/AlertEngine';
+import type { HaltTracker } from '../scanner/HaltTracker';
 import type { MarketDataProvider } from './providers/MarketDataProvider';
+import { AlpacaRest } from './providers/alpaca/AlpacaRest';
 import { AlpacaStreamProvider } from './providers/alpaca/AlpacaStreamProvider';
+import { DEFAULT_RADAR } from './providers/alpaca/MoverRadar';
+import { DEFAULT_PREV_AH } from './providers/alpaca/prevAfterHours';
 import { MockProvider } from './providers/mock/MockProvider';
 
 /** Wires a market data provider into the local cache and alert engine, and tracks throughput. */
@@ -19,6 +23,7 @@ export class IngestionService {
     private readonly env: Env,
     private readonly store: SymbolStore,
     private readonly alerts: AlertEngine,
+    private readonly halts: HaltTracker,
     private readonly logger: Logger,
     private readonly onStatus: (status: ProviderStatus) => void = () => {},
   ) {
@@ -32,15 +37,22 @@ export class IngestionService {
       this.prior.low = before?.low ?? null;
       this.prior.last = before?.last ?? null;
       this.prior.vwap = before?.vwap ?? null;
-      this.store.applyTrade(t);
+      const session = this.store.applyTrade(t);
       const after = this.store.get(t.symbol);
-      if (after) this.alerts.onTrade(t, this.prior, after);
+      // NHOD / NLOD / VWAP alerts are defined against the regular session.
+      if (after && session === 'regular') this.alerts.onTrade(t, this.prior, after);
+      this.halts.onTrade(t);
+    });
+    this.provider.on('tradingStatus', (s) => {
+      this.halts.onStatus(s, this.store.get(s.symbol));
+      this.store.setHalted(s.symbol, this.halts.isHalted(s.symbol));
     });
     this.provider.on('quote', (q) => {
       this.counts.quotes++;
       this.store.applyQuote(q);
     });
     this.provider.on('bar', (b) => this.store.applyBar(b));
+    this.provider.on('history', (symbol, bars) => this.store.applyHistory(symbol, bars));
     this.provider.on('seed', (s) => this.store.applySeed(s));
     this.provider.on('reference', (r) => this.store.applyReference(r));
     this.provider.on('status', (s) => {
@@ -61,10 +73,10 @@ export class IngestionService {
   }
 
   /** Throughput since the previous call. */
-  takeStats(): ServerStats {
+  takeStats(): Omit<ServerStats, 'session'> {
     const now = Date.now();
     const secs = Math.max(0.001, (now - this.windowStart) / 1000);
-    const stats: ServerStats = {
+    const stats = {
       symbols: this.provider.symbols.length,
       tradesPerSec: Math.round(this.counts.trades / secs),
       quotesPerSec: Math.round(this.counts.quotes / secs),
@@ -92,12 +104,37 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
         secretKey: env.ALPACA_SECRET_KEY!,
         feed: env.ALPACA_FEED,
         sandbox: env.ALPACA_SANDBOX,
+        statuses: env.ALPACA_STATUSES,
+        quotes: env.ALPACA_QUOTES,
+        // The `test` feed streams the made-up FAKEPACA, which REST knows nothing about.
+        rest:
+          env.ALPACA_FEED === 'test'
+            ? undefined
+            : new AlpacaRest({
+                keyId: env.ALPACA_KEY_ID!,
+                secretKey: env.ALPACA_SECRET_KEY!,
+                feed: env.ALPACA_FEED,
+                sandbox: env.ALPACA_SANDBOX,
+                paper: env.ALPACA_PAPER,
+                pauseMs: 350,
+              }),
+        movers:
+          env.ALPACA_FEED === 'test' || env.ALPACA_MOVERS_TOP === 0
+            ? undefined
+            : { top: env.ALPACA_MOVERS_TOP, refreshMs: env.ALPACA_MOVERS_REFRESH_SEC * 1000, maxSymbols: env.ALPACA_MAX_SYMBOLS },
+        radar: env.ALPACA_RADAR ? { ...DEFAULT_RADAR, minMovePct: env.ALPACA_RADAR_MOVE_PCT } : undefined,
+        prevAfterHours:
+          env.ALPACA_FEED === 'test' || env.ALPACA_PREV_AH_TOP === 0
+            ? undefined
+            : { ...DEFAULT_PREV_AH, top: env.ALPACA_PREV_AH_TOP, minChangePct: env.ALPACA_PREV_AH_MIN_PCT },
       });
     case 'mock':
       return new MockProvider({
         logger,
         ticksPerSecond: env.MOCK_TICKS_PER_SECOND,
         startFraction: env.MOCK_SESSION_START,
+        session: env.MOCK_SESSION,
+        haltSeconds: env.MOCK_HALT_SECONDS,
       });
   }
 }

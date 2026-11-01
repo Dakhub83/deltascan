@@ -74,6 +74,63 @@ describe('SymbolStore', () => {
     expect(store.get('ABC')!.vwap).toBeCloseTo(11);
   });
 
+  it('tracks 1m / 5m momentum from per-second samples', () => {
+    const store = new SymbolStore();
+    store.applyTrade(trade(10, 100));
+    for (let i = 0; i < 240; i++) store.sampleMomentum(); // 4 min at $10
+    store.applyTrade(trade(10.5, 100));
+    for (let i = 0; i < 61; i++) store.sampleMomentum(); // 1 min at $10.50
+    store.applyTrade(trade(11, 100));
+
+    const s = store.get('ABC')!;
+    expect(s.chg1mPct).toBeCloseTo((11 / 10.5 - 1) * 100); // vs 60s ago
+    expect(s.chg5mPct).toBeCloseTo(10); // vs oldest sample (5 min ago)
+  });
+
+  it('marks halted symbols dirty only on change', () => {
+    const store = new SymbolStore();
+    store.applyTrade(trade(10, 100));
+    store.drainDirty();
+    store.setHalted('ABC', true);
+    store.setHalted('ABC', true);
+    expect(store.drainDirty()).toHaveLength(1);
+    expect(store.get('ABC')!.halted).toBe(true);
+  });
+
+  it('books pre-market and after-hours prints separately from the regular session', () => {
+    // Timestamps stand in for sessions: <100 pre, 100–199 regular, ≥200 post.
+    const store = new SymbolStore({ sessionOf: (ts) => (ts < 100 ? 'pre' : ts < 200 ? 'regular' : 'post') });
+    store.setPrevClose('ABC', 10);
+    store.applyTrade(trade(11, 500, 1));
+    store.applyTrade(trade(12, 500, 2));
+    let s = store.get('ABC')!;
+    expect(s).toMatchObject({ preVolume: 1000, preHigh: 12, preLow: 11, preLast: 12, last: 12, open: null, volume: 0 });
+    expect(s.preChangePct).toBeCloseTo(20);
+    expect(s.changePct).toBeCloseTo(20);
+
+    store.applyTrade(trade(13, 100, 150));
+    store.applyTrade(trade(15, 100, 199));
+    store.applyTrade(trade(16.5, 300, 250));
+    s = store.get('ABC')!;
+    expect(s).toMatchObject({ open: 13, high: 15, volume: 200, regularClose: 15, postVolume: 300, postHigh: 16.5, last: 16.5 });
+    expect(s.postChangePct).toBeCloseTo(10);
+    expect(s.changePct).toBeCloseTo(65);
+  });
+
+  it('builds 1-minute bars from trades, tagged with their session', () => {
+    const store = new SymbolStore({ sessionOf: (ts) => (ts < 120_000 ? 'pre' : 'regular') });
+    store.applyTrade(trade(10, 100, 60_000));
+    store.applyTrade(trade(11, 200, 90_000));
+    store.applyTrade(trade(9.5, 100, 119_999));
+    store.applyTrade(trade(12, 300, 125_000));
+    store.applyTrade(trade(10.8, 50, 100_000)); // late print for a closed minute
+
+    expect(store.getBars('ABC')).toEqual([
+      { symbol: 'ABC', open: 10, high: 11, low: 9.5, close: 9.5, volume: 400, tradeCount: 3, timestamp: 60_000, session: 'pre' },
+      { symbol: 'ABC', open: 12, high: 12, low: 12, close: 12, volume: 300, tradeCount: 1, timestamp: 120_000, session: 'regular' },
+    ]);
+  });
+
   it('resetSession rolls last price into prevClose', () => {
     const store = new SymbolStore();
     store.applyTrade(trade(20, 100));

@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, ColumnState, GetRowIdParams, GridApi, GridReadyEvent, IRowNode } from 'ag-grid-community';
 import type { IDockviewPanelProps } from 'dockview';
 import type { SymbolSnapshot } from '@deltascan/shared';
-import { Check, ChevronDown, Columns3, Pause, Play } from 'lucide-react';
+import { Check, ChevronDown, Columns3, DollarSign, Layers, Pause, Play, X } from 'lucide-react';
 import clsx from 'clsx';
+import { inPriceRange, isActive, parseBound, PRICE_PRESETS, rangeLabel, type PriceRange } from '../scanners/priceRange';
+import { FLOAT_PRESETS, floatLabel, inFloatRange, parseFloatBound, type FloatRange } from '../scanners/floatRange';
+import { passesIndicators, type IndicatorFilter } from '../scanners/indicatorFilter';
+import { IndicatorFilterButton } from '../components/IndicatorFilterButton';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
-import { requestLayoutSave } from '../lib/layout';
+import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { ALL_COLUMN_IDS, COLUMNS, type ColumnId } from '../scanners/columns';
 import { PRESETS, PRESETS_BY_ID } from '../scanners/presets';
@@ -16,21 +20,179 @@ import { IconButton, MenuItem, MenuLabel, Popover } from '../components/Popover'
 export interface FilterPanelParams {
   presetId: string;
   columnState?: ColumnState[];
+  /** Applied on top of the scanner's own filter; per window. */
+  priceRange?: PriceRange;
+  /** Float in shares, applied the same way. */
+  floatRange?: FloatRange;
+  /** RSI / EMA cross / volume spike conditions, applied the same way. */
+  indicators?: IndicatorFilter;
 }
 
 const getRowId = (p: GetRowIdParams<SymbolSnapshot>) => p.data.symbol;
+
+interface RangeKind {
+  title: string;
+  /** Shown inside the inputs: "$" before, "M" after. */
+  prefix?: string;
+  suffix?: string;
+  presets: { label: string; range: PriceRange }[];
+  parse: (text: string) => number | null;
+  /** A stored bound as input text. */
+  show: (n: number) => string;
+  anyLabel: string;
+  note?: string;
+}
+
+export const PRICE_KIND: RangeKind = {
+  title: 'Price',
+  prefix: '$',
+  presets: PRICE_PRESETS,
+  parse: parseBound,
+  show: String,
+  anyLabel: 'Any price',
+};
+
+export const FLOAT_KIND: RangeKind = {
+  title: 'Float (shares)',
+  suffix: 'M',
+  presets: FLOAT_PRESETS,
+  parse: parseFloatBound,
+  show: (n) => String(+(n / 1e6).toFixed(3)),
+  anyLabel: 'Any float',
+  note: 'Type millions, or use K (500K). Symbols with an unknown float still show.',
+};
+
+function RangeFilter({ kind, range, onChange, close }: { kind: RangeKind; range: PriceRange | undefined; onChange: (r: PriceRange | undefined) => void; close: () => void }) {
+  const [min, setMin] = useState(range?.min != null ? kind.show(range.min) : '');
+  const [max, setMax] = useState(range?.max != null ? kind.show(range.max) : '');
+  const apply = (r: PriceRange | undefined) => {
+    onChange(isActive(r) ? r : undefined);
+    close();
+  };
+  const input = (value: string, set: (v: string) => void, label: string) => (
+    <label className="flex flex-1 items-center gap-1 rounded-md border border-line bg-bg px-2 focus-within:border-accent/60">
+      {kind.prefix && <span className="text-[11px] text-muted">{kind.prefix}</span>}
+      <input
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        inputMode="decimal"
+        placeholder={label}
+        aria-label={`${label} ${kind.title.toLowerCase()}`}
+        className="num h-6 w-full bg-transparent text-[12px] text-fg outline-none placeholder:text-muted"
+      />
+      {kind.suffix && <span className="text-[11px] text-muted">{kind.suffix}</span>}
+    </label>
+  );
+  return (
+    <form
+      className="w-60"
+      onSubmit={(e) => {
+        e.preventDefault();
+        apply({ min: kind.parse(min), max: kind.parse(max) });
+      }}
+    >
+      <MenuLabel>{kind.title}</MenuLabel>
+      <div className="flex items-center gap-1.5 px-2.5 pb-2">
+        {input(min, setMin, 'Min')}
+        <span className="text-[11px] text-muted">to</span>
+        {input(max, setMax, 'Max')}
+      </div>
+      <div className="flex flex-wrap gap-1 px-2.5 pb-2">
+        {kind.presets.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => apply(p.range)}
+            className={clsx(
+              'rounded-md px-2 py-0.5 text-[11px] ring-1 ring-inset transition-colors',
+              range?.min === p.range.min && range?.max === p.range.max ? 'bg-accent/15 text-accent ring-accent/40' : 'text-dim ring-line hover:bg-hover hover:text-fg',
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {kind.note && <p className="px-2.5 pb-2 text-[10px] leading-snug text-muted">{kind.note}</p>}
+      <div className="flex gap-1.5 border-t border-line px-2.5 pt-2 pb-1">
+        <button type="submit" className="flex-1 rounded-md bg-accent px-2 py-1 text-[11px] font-semibold text-white hover:bg-accent/90">
+          Apply
+        </button>
+        <button type="button" onClick={() => apply(undefined)} className="rounded-md px-2 py-1 text-[11px] text-dim hover:bg-hover hover:text-fg">
+          {kind.anyLabel}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Toolbar button that opens a range popover; turns blue and shows the range while one is set. */
+export function RangeButton({
+  kind,
+  range,
+  label,
+  icon,
+  onChange,
+}: {
+  kind: RangeKind;
+  range: PriceRange | undefined;
+  label: string;
+  icon: ReactNode;
+  onChange: (r: PriceRange | undefined) => void;
+}) {
+  const on = isActive(range);
+  const noun = kind.title.split(' ')[0]!.toLowerCase();
+  return (
+    <>
+      <Popover
+        trigger={(open) => (
+          <button
+            type="button"
+            title={`Filter by ${noun}`}
+            className={clsx(
+              'flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors',
+              on ? 'bg-accent/15 text-accent hover:bg-accent/25' : clsx('text-muted hover:bg-hover hover:text-fg', open && 'bg-hover text-fg'),
+            )}
+          >
+            {icon}
+            {label}
+          </button>
+        )}
+      >
+        {(close) => <RangeFilter kind={kind} range={range} onChange={onChange} close={close} />}
+      </Popover>
+      {on && (
+        <button
+          type="button"
+          title={`Clear the ${noun} filter`}
+          aria-label={`Clear the ${noun} filter`}
+          onClick={() => onChange(undefined)}
+          className="-ml-1.5 rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </>
+  );
+}
 
 export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<FilterPanelParams>) {
   const preset = PRESETS_BY_ID.get(params.presetId) ?? PRESETS[0]!;
   const gridApi = useRef<GridApi<SymbolSnapshot> | null>(null);
   const presetRef = useRef(preset);
   presetRef.current = preset;
+  const priceRef = useRef(params.priceRange);
+  priceRef.current = params.priceRange;
+  const floatRef = useRef(params.floatRange);
+  floatRef.current = params.floatRange;
+  const indicatorRef = useRef(params.indicators);
+  indicatorRef.current = params.indicators;
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
   const [count, setCount] = useState(0);
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => visibleFrom(params.columnState, preset.columns));
   const selectedSymbol = useUiStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
+  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
 
   const columnDefs = useMemo<ColDef<SymbolSnapshot>[]>(() => {
     const ordered = [...preset.columns, ...ALL_COLUMN_IDS.filter((id) => !preset.columns.includes(id))];
@@ -67,6 +229,10 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
     api.onFilterChanged();
     setVisibleCols(new Set(preset.columns));
   }, [preset]);
+
+  useEffect(() => {
+    gridApi.current?.onFilterChanged();
+  }, [params.priceRange, params.floatRange, params.indicators]);
 
   // Keep row selection linked to the global selected symbol.
   useEffect(() => {
@@ -106,6 +272,19 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
     if (!next) return;
     panelApi.updateParameters({ presetId: id, columnState: undefined });
     panelApi.setTitle(next.title);
+    requestLayoutSave();
+  };
+
+  const setPriceRange = (priceRange: PriceRange | undefined) => {
+    panelApi.updateParameters({ priceRange });
+    requestLayoutSave();
+  };
+  const setFloatRange = (floatRange: FloatRange | undefined) => {
+    panelApi.updateParameters({ floatRange });
+    requestLayoutSave();
+  };
+  const setIndicators = (indicators: IndicatorFilter | undefined) => {
+    panelApi.updateParameters({ indicators });
     requestLayoutSave();
   };
 
@@ -165,7 +344,23 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           )}
         </Popover>
 
-        <span className="hidden truncate text-[11px] text-muted @[520px]:inline">{preset.description}</span>
+        <RangeButton
+          kind={PRICE_KIND}
+          range={params.priceRange}
+          label={isActive(params.priceRange) ? rangeLabel(params.priceRange) : 'Price'}
+          icon={<DollarSign className="size-3" />}
+          onChange={setPriceRange}
+        />
+        <RangeButton
+          kind={FLOAT_KIND}
+          range={params.floatRange}
+          label={isActive(params.floatRange) ? floatLabel(params.floatRange) : 'Float'}
+          icon={<Layers className="size-3" />}
+          onChange={setFloatRange}
+        />
+        <IndicatorFilterButton value={params.indicators} onChange={setIndicators} />
+
+        <span className="hidden truncate text-[11px] text-muted @[620px]:inline">{preset.description}</span>
 
         <div className="ml-auto flex items-center gap-1">
           <span
@@ -190,7 +385,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
             )}
           >
             {() => (
-              <div className="max-h-80 overflow-y-auto">
+              <div>
                 <MenuLabel>Columns</MenuLabel>
                 {ALL_COLUMN_IDS.filter((id) => id !== 'symbol').map((id) => (
                   <MenuItem key={id} onClick={() => toggleColumn(id)} active={visibleCols.has(id)}>
@@ -219,10 +414,14 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           getRowId={getRowId}
           onGridReady={onGridReady}
           isExternalFilterPresent={() => true}
-          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && presetRef.current.filter(node.data)}
+          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && inPriceRange(node.data.last, priceRef.current) && inFloatRange(node.data.floatShares, floatRef.current) && passesIndicators(node.data, indicatorRef.current, Date.now()) && presetRef.current.filter(node.data)}
           onModelUpdated={(e) => setCount(e.api.getDisplayedRowCount())}
           rowSelection={{ mode: 'singleRow', checkboxes: false, enableClickSelection: true }}
-          onRowClicked={(e) => e.data && setSelectedSymbol(e.data.symbol)}
+          onRowClicked={(e) => {
+            if (!e.data) return;
+            setSelectedSymbol(e.data.symbol);
+            onSymbolClick(e.data.symbol);
+          }}
           onCellFocused={(e) => {
             if (e.rowIndex == null || e.rowPinned) return;
             const sym = e.api.getDisplayedRowAtIndex(e.rowIndex)?.data?.symbol;
@@ -236,7 +435,9 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           suppressCellFocus={false}
           animateRows
           suppressDragLeaveHidesColumns
-          overlayNoRowsTemplate='<span style="color:#6b7587;font-size:12px">No symbols match this scan right now</span>'
+          overlayNoRowsTemplate={`<span style="color:#7d8799;font-size:12px;padding:0 16px;text-align:center">${
+            preset.emptyText ?? 'No symbols match this scan right now'
+          }</span>`}
         />
       </div>
     </div>

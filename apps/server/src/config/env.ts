@@ -34,9 +34,27 @@ const schema = z
     ALPACA_FEED: z.enum(['iex', 'sip', 'test']).default('iex'),
     ALPACA_SANDBOX: bool(false),
     ALPACA_PAPER: bool(true),
+    ALPACA_STATUSES: bool(false),
+    // Bid/ask quotes. On free iex, trades + quotes share the 30-subscription limit, so this halves the symbols.
+    ALPACA_QUOTES: bool(false),
+    // Top gainers added to the stream each refresh (0 = WATCHLIST only), up to ALPACA_MAX_SYMBOLS in total.
+    ALPACA_MOVERS_TOP: z.coerce.number().int().min(0).max(50).default(20),
+    ALPACA_MOVERS_REFRESH_SEC: int(60),
+    // Watch every symbol's minute bars (free) and rotate live slots to the fastest movers.
+    ALPACA_RADAR: bool(true),
+    // A move of this many % (up or down) inside 5 minutes puts a stock on the radar.
+    ALPACA_RADAR_MOVE_PCT: z.coerce.number().positive().default(4),
+    // The previous session's top after-hours gainers added as rows each morning (0 = off).
+    ALPACA_PREV_AH_TOP: z.coerce.number().int().min(0).max(100).default(30),
+    // Minimum after-hours gain (vs the 4 PM close) for that list.
+    ALPACA_PREV_AH_MIN_PCT: z.coerce.number().positive().default(5),
+    // Trade + quote subscriptions allowed by the plan (bars don't count): 30 on free iex.
+    ALPACA_MAX_SYMBOLS: int(30),
 
     POLYGON_API_KEY: z.string().optional(),
     FINNHUB_API_KEY: z.string().optional(),
+    // SEC asks every client to identify itself with a contact email; requests without one get 403.
+    SEC_USER_AGENT: z.string().optional(),
 
     WATCHLIST: symbolList,
 
@@ -51,8 +69,22 @@ const schema = z
 
     MOCK_TICKS_PER_SECOND: int(200),
     MOCK_SESSION_START: z.coerce.number().min(0).max(1).default(0.35),
+    MOCK_SESSION: z.enum(['pre', 'regular', 'post']).default('regular'),
+    MOCK_HALT_SECONDS: int(90),
 
+    // Relative paths are from the repo root.
     DB_PATH: z.string().default('./data/scanner.db'),
+
+    // Sign-in for every page, API call and the data socket. Off: a single built-in local account.
+    AUTH_REQUIRED: bool(false),
+    // Anyone may create an account. The first account can always be created.
+    ALLOW_SIGNUP: bool(false),
+    // Mark the session cookie Secure: set when the site is served over HTTPS.
+    COOKIE_SECURE: bool(false),
+    // Behind a reverse proxy: trust X-Forwarded-For for the client address (sign-in rate limit).
+    TRUST_PROXY: bool(false),
+    // Serve the built web app (apps/web/dist) from this server: production, after `npm run build`.
+    SERVE_WEB: bool(false),
   })
   .superRefine((env, ctx) => {
     if (env.DATA_PROVIDER === 'alpaca' && (!env.ALPACA_KEY_ID || !env.ALPACA_SECRET_KEY)) {
@@ -77,5 +109,7 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env = { ...parsed.data, DB_PATH: resolve(repoRoot, parsed.data.DB_PATH) };
+/** The built web app, served when SERVE_WEB is on. */
+export const WEB_DIST = resolve(repoRoot, 'apps/web/dist');
 export type Env = typeof env;

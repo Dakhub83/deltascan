@@ -28,6 +28,17 @@ const DEFAULT_COOLDOWN_MS: Record<AlertType, number> = {
   vwap_loss: 45_000,
   volume_spike: 60_000,
   block_trade: 0,
+  halt: 0,
+  resume: 0,
+  // FadeDetector fires these only on a stage change, so a short cooldown is enough; a long one
+  // would hide a second top that comes minutes after a new high cancelled the first.
+  topping: 60_000,
+  rejection_confirmed: 60_000,
+  failed_bounce: 60_000,
+  vwap_test: 60_000,
+  vwap_break: 60_000,
+  vwap_bounce: 60_000,
+  backside: 60_000,
 };
 
 const REGULAR_SESSION_MINUTES = 390;
@@ -122,6 +133,16 @@ export class AlertEngine {
     }
   }
 
+  /** Alerts detected by other components (e.g. halts), subject to the same cooldowns. */
+  raise(
+    type: AlertType,
+    event: Pick<Trade, 'symbol' | 'price' | 'timestamp'>,
+    changePct: number | null,
+    detail: string,
+  ): void {
+    this.fire(type, event, { changePct }, detail);
+  }
+
   /** Alerts raised since the last drain (for broadcasting). */
   drain(): Alert[] {
     const out = this.pending;
@@ -134,7 +155,23 @@ export class AlertEngine {
     return [...this.history].reverse();
   }
 
-  private fire(type: AlertType, t: Trade, snap: Readonly<SymbolSnapshot>, detail: string, value: number): void {
+  /**
+   * Reloads saved alerts (newest first) after a restart, so connecting clients see the day's
+   * feed. Cooldowns resume from them too; nothing is re-sent as new.
+   */
+  restore(alerts: readonly Alert[]): void {
+    const oldestFirst = [...alerts].reverse().slice(-this.historySize);
+    this.history.splice(0, this.history.length, ...oldestFirst);
+    for (const a of oldestFirst) this.lastFired.set(`${a.symbol}:${a.type}`, a.timestamp);
+  }
+
+  private fire(
+    type: AlertType,
+    t: Pick<Trade, 'symbol' | 'price' | 'timestamp'>,
+    snap: Pick<SymbolSnapshot, 'changePct'>,
+    detail: string,
+    value?: number,
+  ): void {
     const key = `${t.symbol}:${type}`;
     const last = this.lastFired.get(key);
     if (last !== undefined && t.timestamp - last < this.cooldownMs[type]) return;

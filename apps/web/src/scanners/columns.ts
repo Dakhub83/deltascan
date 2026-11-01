@@ -1,7 +1,9 @@
 import type { ColDef, ValueGetterParams } from 'ag-grid-community';
 import type { SymbolSnapshot } from '@deltascan/shared';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
-import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, SymbolCell } from './cells';
+import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, StageCell, SymbolCell, TierCell, type Tier } from './cells';
+import { STAGE_META, minutesSinceHigh, offHighPct } from './fade';
+import { minutesSinceCross, RSI_OVERBOUGHT, RSI_OVERSOLD } from './indicatorFilter';
 
 type Col = ColDef<SymbolSnapshot>;
 type Getter = (s: SymbolSnapshot) => number | null;
@@ -15,7 +17,20 @@ export const derived = {
   hodDistPct: (s) => (s.last != null && s.high ? ((s.high - s.last) / s.high) * 100 : null),
   spreadPct: (s) => (s.bid && s.ask && s.ask >= s.bid ? ((s.ask - s.bid) / ((s.ask + s.bid) / 2)) * 100 : null),
   dollarVolume: (s) => (s.vwap != null ? s.vwap * s.volume : null),
+  /** Dollar move over the last 5 minutes, recovered from the 5-minute % change. */
+  chg5mUsd: (s) => (s.last != null && s.chg5mPct != null ? s.last - s.last / (1 + s.chg5mPct / 100) : null),
+  offLowPct: (s) => pctOf(s.last, s.low),
 } satisfies Record<string, Getter>;
+
+/** Tier thresholds; checked in this order, so a sub-$1 low-float stock is tagged sub-$1. */
+export const TIERS = { subDollarBelow: 1, lowFloatBelow: 20e6, largeCapAbove: 10e9 };
+
+export function tierOf(s: SymbolSnapshot): Tier | null {
+  if (s.last != null && s.last < TIERS.subDollarBelow) return 'sub-dollar';
+  if (s.floatShares != null && s.floatShares < TIERS.lowFloatBelow) return 'low-float';
+  if (s.marketCap != null && s.marketCap > TIERS.largeCapAbove) return 'large-cap';
+  return null;
+}
 
 const getter = (fn: Getter) => (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? fn(p.data) : null);
 
@@ -24,13 +39,43 @@ const pctFmt = { valueFormatter: (p: { value: number | null }) => fmtPct(p.value
 
 export const COLUMNS = {
   symbol: {
-    colId: 'symbol', field: 'symbol', headerName: 'Symbol', pinned: 'left', width: 92, cellRenderer: SymbolCell,
+    colId: 'symbol', field: 'symbol', headerName: 'Symbol', pinned: 'left', width: 116, cellRenderer: SymbolCell,
     sortingOrder: ['asc', 'desc', null], lockPinned: true,
   },
   name: { colId: 'name', field: 'name', headerName: 'Company', width: 150, cellClass: 'text-dim' },
   sector: { colId: 'sector', field: 'sector', headerName: 'Sector', width: 110, cellClass: 'text-dim' },
   last: { ...num, colId: 'last', field: 'last', headerName: 'Price', width: 82, cellRenderer: PriceCell },
   changePct: { ...num, colId: 'changePct', field: 'changePct', headerName: 'Chg %', width: 86, cellRenderer: ChangeCell },
+  chg1mPct: { ...num, ...pctFmt, colId: 'chg1mPct', field: 'chg1mPct', headerName: '1m %', width: 72, cellClassRules: signRules() },
+  chg5mPct: { ...num, ...pctFmt, colId: 'chg5mPct', field: 'chg5mPct', headerName: '5m %', width: 72, cellClassRules: signRules() },
+  fadeStage: {
+    colId: 'fadeStage', headerName: 'Setup', width: 132, sortingOrder: ['asc', 'desc', null],
+    valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data?.fade ? STAGE_META[p.data.fade.stage].order : null),
+    cellRenderer: StageCell,
+  },
+  offHighPct: {
+    ...num, colId: 'offHighPct', headerName: 'Off High', width: 80, sortingOrder: ['asc', 'desc', null],
+    valueGetter: getter(offHighPct), valueFormatter: (p) => (p.value == null ? '—' : `-${p.value.toFixed(1)}%`),
+    cellClassRules: { 'text-down': (p) => (p.value ?? 0) >= 8 },
+  },
+  sinceHighMin: {
+    ...num, colId: 'sinceHighMin', headerName: 'Since High', width: 84, sortingOrder: ['asc', 'desc', null],
+    valueGetter: getter((s) => minutesSinceHigh(s)), valueFormatter: (p) => (p.value == null ? '—' : `${Math.floor(p.value)}m`),
+    cellClass: 'num text-dim',
+  },
+  tier: {
+    colId: 'tier', headerName: 'Type', width: 78, sortable: false,
+    valueGetter: (p: ValueGetterParams<SymbolSnapshot>) => (p.data ? tierOf(p.data) : null), cellRenderer: TierCell,
+  },
+  preChangePct: { ...num, ...pctFmt, colId: 'preChangePct', field: 'preChangePct', headerName: 'PM Chg %', width: 86, cellRenderer: ChangeCell },
+  preVolume: { ...num, colId: 'preVolume', field: 'preVolume', headerName: 'PM Vol', width: 78, valueFormatter: (p) => fmtCompact(p.value) },
+  preHigh: { ...num, colId: 'preHigh', field: 'preHigh', headerName: 'PM High', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },
+  regularClose: {
+    ...num, colId: 'regularClose', field: 'regularClose', headerName: 'Close', width: 78,
+    valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim',
+  },
+  postChangePct: { ...num, ...pctFmt, colId: 'postChangePct', field: 'postChangePct', headerName: 'AH Chg %', width: 86, cellRenderer: ChangeCell },
+  postVolume: { ...num, colId: 'postVolume', field: 'postVolume', headerName: 'AH Vol', width: 78, valueFormatter: (p) => fmtCompact(p.value) },
   gapPct: { ...num, ...pctFmt, colId: 'gapPct', field: 'gapPct', headerName: 'Gap %', width: 78, cellClassRules: signRules() },
   fromOpenPct: {
     ...num, ...pctFmt, colId: 'fromOpenPct', headerName: 'From Open', width: 86,
@@ -61,6 +106,61 @@ export const COLUMNS = {
     valueGetter: getter(derived.hodDistPct),
     valueFormatter: (p) => (p.value == null ? '—' : p.value < 0.005 ? 'AT HOD' : `-${p.value.toFixed(2)}%`),
     cellClassRules: { 'text-up font-semibold': (p) => p.value != null && p.value < 0.005 },
+  },
+  chg5mUsd: {
+    ...num, colId: 'chg5mUsd', headerName: '5m $', width: 72,
+    valueGetter: getter(derived.chg5mUsd),
+    valueFormatter: (p) => (p.value == null ? '—' : `${p.value >= 0 ? '+' : '−'}${Math.abs(p.value).toFixed(2)}`),
+    cellClassRules: signRules(),
+  },
+  offLowPct: {
+    ...num, colId: 'offLowPct', headerName: 'Off Low', width: 86,
+    valueGetter: getter(derived.offLowPct),
+    valueFormatter: (p) => (p.value == null ? '—' : `+${p.value.toFixed(1)}%`),
+    cellClassRules: { 'text-up': (p) => (p.value ?? 0) >= 3 },
+  },
+  rsi14: {
+    ...num, colId: 'rsi14', headerName: 'RSI', width: 64, headerTooltip: 'RSI(14) on 1-minute bars',
+    valueGetter: getter((s) => s.indicators?.rsi14 ?? null), valueFormatter: (p) => (p.value == null ? '—' : p.value.toFixed(0)),
+    cellClassRules: { 'text-down font-semibold': (p) => (p.value ?? 0) >= RSI_OVERBOUGHT, 'text-up': (p) => p.value != null && p.value <= RSI_OVERSOLD },
+  },
+  emaCross: {
+    ...num, colId: 'emaCross', headerName: 'EMA 9/20', width: 84, sortingOrder: ['asc', 'desc', null],
+    headerTooltip: 'Latest EMA 9 / EMA 20 cross on 1-minute bars, and how long ago',
+    // Sorts by recency: the freshest cross first.
+    valueGetter: getter((s) => minutesSinceCross(s, Date.now())),
+    valueFormatter: (p) => {
+      const dir = p.data?.indicators?.emaCross?.dir;
+      return p.value == null || !dir ? '—' : `${dir === 'bull' ? '▲' : '▼'} ${Math.floor(p.value)}m`;
+    },
+    cellClassRules: { 'text-up': (p) => p.data?.indicators?.emaCross?.dir === 'bull', 'text-down': (p) => p.data?.indicators?.emaCross?.dir === 'bear' },
+  },
+  ema9: {
+    ...num, colId: 'ema9', headerName: 'EMA 9', width: 76, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.indicators?.ema9 ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  ema20: {
+    ...num, colId: 'ema20', headerName: 'EMA 20', width: 76, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.indicators?.ema20 ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  prevAhChangePct: {
+    ...num, ...pctFmt, colId: 'prevAhChangePct', headerName: 'Prev AH %', width: 88,
+    headerTooltip: "Previous trading day's after-hours move, vs its 4:00 PM close",
+    valueGetter: getter((s) => s.prevAfterHours?.changePct ?? null), cellClassRules: signRules(),
+  },
+  prevAhLast: {
+    ...num, colId: 'prevAhLast', headerName: 'Prev AH Last', width: 92, cellClass: 'num text-dim',
+    headerTooltip: "Last price of the previous day's after-hours session",
+    valueGetter: getter((s) => s.prevAfterHours?.last ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  prevAhHigh: {
+    ...num, colId: 'prevAhHigh', headerName: 'Prev AH High', width: 92, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.prevAfterHours?.high ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  prevAhVolume: {
+    ...num, colId: 'prevAhVolume', headerName: 'Prev AH Vol', width: 88,
+    headerTooltip: "Shares traded in the previous day's after-hours session",
+    valueGetter: getter((s) => s.prevAfterHours?.volume ?? null), valueFormatter: (p) => fmtCompact(p.value),
   },
   range: { colId: 'range', headerName: 'Day Range', width: 110, sortable: false, cellRenderer: RangeCell },
   vwap: { ...num, colId: 'vwap', field: 'vwap', headerName: 'VWAP', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },
