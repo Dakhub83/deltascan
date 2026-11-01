@@ -123,8 +123,19 @@ export interface SymbolSnapshot {
   postChangePct: number | null;
   /** Short-side setup stage, worked out from completed 1-minute bars; null when not in play. */
   fade: FadeState | null;
+  /** RSI and moving averages on completed 1-minute bars; null until there are enough bars. */
+  indicators: Indicators | null;
   lastTradeAt: EpochMs | null;
   updatedAt: EpochMs;
+}
+
+export interface Indicators {
+  /** RSI(14), Wilder smoothing. */
+  rsi14: number | null;
+  ema9: number;
+  ema20: number;
+  /** The latest EMA 9 / EMA 20 cross: `bull` = 9 crossed above 20. `at` is the crossing bar's start. */
+  emaCross: { dir: 'bull' | 'bear'; at: EpochMs } | null;
 }
 
 // ── Fade setups (short side) ──

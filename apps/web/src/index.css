@@ -1,26 +1,7 @@
 @import 'tailwindcss';
 @import 'dockview/dist/styles/dockview.css';
 
-@theme {
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Mono', monospace;
-
-  --color-bg: #07090d;
-  --color-panel: #0c1017;
-  --color-raised: #121823;
-  --color-hover: #18202d;
-  --color-line: #1c2431;
-  --color-line-strong: #283244;
-  --color-fg: #dfe4ec;
-  --color-dim: #a3adbd;
-  --color-muted: #7d8799;
-  --color-accent: #3d8bfd;
-  --color-up: #16c784;
-  --color-down: #f0464f;
-  --color-warn: #f5a524;
-  --color-violet: #a78bfa;
-  --color-cyan: #22d3ee;
-}
+@import './theme.css';
 
 @layer base {
   html,

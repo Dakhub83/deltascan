@@ -16,6 +16,7 @@
     "dev:server": "npm run dev -w @deltascan/server",
     "dev:web": "npm run dev -w @deltascan/web",
     "build": "npm run build -w @deltascan/web",
+    "start": "npm run start -w @deltascan/server",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },

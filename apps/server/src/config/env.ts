@@ -68,7 +68,19 @@ const schema = z
     MOCK_SESSION: z.enum(['pre', 'regular', 'post']).default('regular'),
     MOCK_HALT_SECONDS: int(90),
 
+    // Relative paths are from the repo root.
     DB_PATH: z.string().default('./data/scanner.db'),
+
+    // Sign-in for every page, API call and the data socket. Off: a single built-in local account.
+    AUTH_REQUIRED: bool(false),
+    // Anyone may create an account. The first account can always be created.
+    ALLOW_SIGNUP: bool(false),
+    // Mark the session cookie Secure: set when the site is served over HTTPS.
+    COOKIE_SECURE: bool(false),
+    // Behind a reverse proxy: trust X-Forwarded-For for the client address (sign-in rate limit).
+    TRUST_PROXY: bool(false),
+    // Serve the built web app (apps/web/dist) from this server: production, after `npm run build`.
+    SERVE_WEB: bool(false),
   })
   .superRefine((env, ctx) => {
     if (env.DATA_PROVIDER === 'alpaca' && (!env.ALPACA_KEY_ID || !env.ALPACA_SECRET_KEY)) {
@@ -93,5 +105,7 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env = { ...parsed.data, DB_PATH: resolve(repoRoot, parsed.data.DB_PATH) };
+/** The built web app, served when SERVE_WEB is on. */
+export const WEB_DIST = resolve(repoRoot, 'apps/web/dist');
 export type Env = typeof env;

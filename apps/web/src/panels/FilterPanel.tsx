@@ -7,6 +7,8 @@ import { Check, ChevronDown, Columns3, DollarSign, Layers, Pause, Play, X } from
 import clsx from 'clsx';
 import { inPriceRange, isActive, parseBound, PRICE_PRESETS, rangeLabel, type PriceRange } from '../scanners/priceRange';
 import { FLOAT_PRESETS, floatLabel, inFloatRange, parseFloatBound, type FloatRange } from '../scanners/floatRange';
+import { passesIndicators, type IndicatorFilter } from '../scanners/indicatorFilter';
+import { IndicatorFilterButton } from '../components/IndicatorFilterButton';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
@@ -22,6 +24,8 @@ export interface FilterPanelParams {
   priceRange?: PriceRange;
   /** Float in shares, applied the same way. */
   floatRange?: FloatRange;
+  /** RSI / EMA cross / volume spike conditions, applied the same way. */
+  indicators?: IndicatorFilter;
 }
 
 const getRowId = (p: GetRowIdParams<SymbolSnapshot>) => p.data.symbol;
@@ -180,6 +184,8 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
   priceRef.current = params.priceRange;
   const floatRef = useRef(params.floatRange);
   floatRef.current = params.floatRange;
+  const indicatorRef = useRef(params.indicators);
+  indicatorRef.current = params.indicators;
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
   const [count, setCount] = useState(0);
@@ -226,7 +232,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
 
   useEffect(() => {
     gridApi.current?.onFilterChanged();
-  }, [params.priceRange, params.floatRange]);
+  }, [params.priceRange, params.floatRange, params.indicators]);
 
   // Keep row selection linked to the global selected symbol.
   useEffect(() => {
@@ -275,6 +281,10 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
   };
   const setFloatRange = (floatRange: FloatRange | undefined) => {
     panelApi.updateParameters({ floatRange });
+    requestLayoutSave();
+  };
+  const setIndicators = (indicators: IndicatorFilter | undefined) => {
+    panelApi.updateParameters({ indicators });
     requestLayoutSave();
   };
 
@@ -348,6 +358,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           icon={<Layers className="size-3" />}
           onChange={setFloatRange}
         />
+        <IndicatorFilterButton value={params.indicators} onChange={setIndicators} />
 
         <span className="hidden truncate text-[11px] text-muted @[620px]:inline">{preset.description}</span>
 
@@ -403,7 +414,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
           getRowId={getRowId}
           onGridReady={onGridReady}
           isExternalFilterPresent={() => true}
-          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && inPriceRange(node.data.last, priceRef.current) && inFloatRange(node.data.floatShares, floatRef.current) && presetRef.current.filter(node.data)}
+          doesExternalFilterPass={(node: IRowNode<SymbolSnapshot>) => !!node.data && inPriceRange(node.data.last, priceRef.current) && inFloatRange(node.data.floatShares, floatRef.current) && passesIndicators(node.data, indicatorRef.current, Date.now()) && presetRef.current.filter(node.data)}
           onModelUpdated={(e) => setCount(e.api.getDisplayedRowCount())}
           rowSelection={{ mode: 'singleRow', checkboxes: false, enableClickSelection: true }}
           onRowClicked={(e) => {

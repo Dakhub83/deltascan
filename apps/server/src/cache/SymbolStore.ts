@@ -1,4 +1,4 @@
-import type { Bar, FadeState, Quote, ReferenceData, SessionSeed, SymbolSnapshot, Trade, TradeSession } from '@deltascan/shared';
+import type { Bar, FadeState, Indicators, Quote, ReferenceData, SessionSeed, SymbolSnapshot, Trade, TradeSession } from '@deltascan/shared';
 
 /** About 2½ days of extended-hours 1-minute bars (16 h × 60 per day). */
 const DEFAULT_MAX_BARS = 2_400;
@@ -124,6 +124,24 @@ export class SymbolStore {
       updateMomentum(e);
       if (e.snap.chg1mPct !== before1 || e.snap.chg5mPct !== before5) this.dirty.add(symbol);
     }
+  }
+
+  setIndicators(symbol: string, indicators: Indicators | null): void {
+    const s = this.entry(symbol).snap;
+    const a = s.indicators;
+    const same =
+      a === indicators ||
+      (a !== null &&
+        indicators !== null &&
+        a.rsi14 === indicators.rsi14 &&
+        a.ema9 === indicators.ema9 &&
+        a.ema20 === indicators.ema20 &&
+        a.emaCross?.dir === indicators.emaCross?.dir &&
+        a.emaCross?.at === indicators.emaCross?.at);
+    if (same) return;
+    s.indicators = indicators;
+    s.updatedAt = Date.now();
+    this.dirty.add(symbol);
   }
 
   setFade(symbol: string, fade: FadeState | null): void {
@@ -400,6 +418,7 @@ function emptySnapshot(symbol: string): SymbolSnapshot {
     postLow: null,
     postChangePct: null,
     fade: null,
+    indicators: null,
     lastTradeAt: null,
     updatedAt: Date.now(),
   };

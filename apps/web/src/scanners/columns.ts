@@ -3,6 +3,7 @@ import type { SymbolSnapshot } from '@deltascan/shared';
 import { fmtCompact, fmtPct, fmtPrice } from '../lib/format';
 import { ChangeCell, FloatCell, PriceCell, RangeCell, RvolCell, StageCell, SymbolCell, TierCell, type Tier } from './cells';
 import { STAGE_META, minutesSinceHigh, offHighPct } from './fade';
+import { minutesSinceCross, RSI_OVERBOUGHT, RSI_OVERSOLD } from './indicatorFilter';
 
 type Col = ColDef<SymbolSnapshot>;
 type Getter = (s: SymbolSnapshot) => number | null;
@@ -117,6 +118,30 @@ export const COLUMNS = {
     valueGetter: getter(derived.offLowPct),
     valueFormatter: (p) => (p.value == null ? '—' : `+${p.value.toFixed(1)}%`),
     cellClassRules: { 'text-up': (p) => (p.value ?? 0) >= 3 },
+  },
+  rsi14: {
+    ...num, colId: 'rsi14', headerName: 'RSI', width: 64, headerTooltip: 'RSI(14) on 1-minute bars',
+    valueGetter: getter((s) => s.indicators?.rsi14 ?? null), valueFormatter: (p) => (p.value == null ? '—' : p.value.toFixed(0)),
+    cellClassRules: { 'text-down font-semibold': (p) => (p.value ?? 0) >= RSI_OVERBOUGHT, 'text-up': (p) => p.value != null && p.value <= RSI_OVERSOLD },
+  },
+  emaCross: {
+    ...num, colId: 'emaCross', headerName: 'EMA 9/20', width: 84, sortingOrder: ['asc', 'desc', null],
+    headerTooltip: 'Latest EMA 9 / EMA 20 cross on 1-minute bars, and how long ago',
+    // Sorts by recency: the freshest cross first.
+    valueGetter: getter((s) => minutesSinceCross(s, Date.now())),
+    valueFormatter: (p) => {
+      const dir = p.data?.indicators?.emaCross?.dir;
+      return p.value == null || !dir ? '—' : `${dir === 'bull' ? '▲' : '▼'} ${Math.floor(p.value)}m`;
+    },
+    cellClassRules: { 'text-up': (p) => p.data?.indicators?.emaCross?.dir === 'bull', 'text-down': (p) => p.data?.indicators?.emaCross?.dir === 'bear' },
+  },
+  ema9: {
+    ...num, colId: 'ema9', headerName: 'EMA 9', width: 76, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.indicators?.ema9 ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  ema20: {
+    ...num, colId: 'ema20', headerName: 'EMA 20', width: 76, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.indicators?.ema20 ?? null), valueFormatter: (p) => fmtPrice(p.value),
   },
   range: { colId: 'range', headerName: 'Day Range', width: 110, sortable: false, cellRenderer: RangeCell },
   vwap: { ...num, colId: 'vwap', field: 'vwap', headerName: 'VWAP', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },

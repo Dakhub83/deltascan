@@ -1,6 +1,10 @@
-import { createServer, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
-import type { Bar, ClientMessage, CompanyProfile, DilutionReport, FadeSignal, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Alert, Bar, ClientMessage, CompanyProfile, DilutionReport, FadeSignal, MarketSession, ProviderStatus, ServerMessage, ServerStats } from '@deltascan/shared';
+import type { Auth } from '../auth/Auth';
+import type { AppDb } from '../db/AppDb';
+import { handleAppApi, sendJson } from './AppApi';
+import { serveStatic } from './staticFiles';
 import type { Logger } from '../lib/logger';
 import type { SymbolStore } from '../cache/SymbolStore';
 import type { AlertEngine } from '../scanner/AlertEngine';
@@ -21,6 +25,12 @@ export interface ClientGatewayOptions {
   profile?: (symbol: string) => Promise<CompanyProfile | null>;
   /** Short-side signals for the chart, including ones replayed at startup without alerting. */
   fadeSignals?: (symbol: string) => FadeSignal[];
+  /** Accounts, watchlists, layouts and alert history. Without them every endpoint is open. */
+  app?: { auth: Auth; db: AppDb; onWatch: (symbol: string) => void; trustProxy: boolean };
+  /** New alerts, once per flush (saved to the history). */
+  onAlerts?: (alerts: Alert[]) => void;
+  /** Built web app to serve (production); the Vite dev server serves it otherwise. */
+  webRoot?: string;
   logger: Logger;
 }
 
@@ -53,36 +63,55 @@ export class ClientGateway {
   constructor(private readonly opts: ClientGatewayOptions) {
     this.log = opts.logger.child({ component: 'gateway' });
     this.http = createServer((req, res) => {
-      const url = new URL(req.url ?? '/', 'http://localhost');
-      if (url.pathname === '/health') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
-        return;
-      }
-      if (url.pathname === '/api/dilution') {
-        this.serveLookup(opts.dilution, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'SEC_USER_AGENT is not set');
-        return;
-      }
-      if (url.pathname === '/api/profile') {
-        this.serveLookup(opts.profile, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'Set SEC_USER_AGENT (and optionally Alpaca keys)');
-        return;
-      }
-      if (url.pathname === '/api/bars') {
-        const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(opts.store.getBars(symbol)));
-        return;
-      }
-      if (url.pathname === '/api/signals') {
-        const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(opts.fadeSignals?.(symbol) ?? []));
-        return;
-      }
-      res.writeHead(404).end();
+      this.route(req, res).catch((err: Error) => {
+        this.log.error({ err: err.message, path: req.url }, 'request failed');
+        if (!res.headersSent) sendJson(res, 500, { error: 'Server error' });
+      });
     });
-    this.wss = new WebSocketServer({ server: this.http, path: '/ws', perMessageDeflate: false });
+    this.wss = new WebSocketServer({
+      server: this.http,
+      path: '/ws',
+      perMessageDeflate: false,
+      verifyClient: (info: { req: IncomingMessage }) => !opts.app || opts.app.auth.userFor(info.req) !== null,
+    });
     this.wss.on('connection', (ws) => this.onConnection(ws));
+  }
+
+  private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const opts = this.opts;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (opts.app && (await handleAppApi(req, res, url, { ...opts.app }))) return;
+    if (url.pathname.startsWith('/api/') && opts.app && !opts.app.auth.userFor(req)) {
+      sendJson(res, 401, { error: 'Sign in first' });
+      return;
+    }
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, clients: this.clients.size, status: opts.getStatus() }));
+      return;
+    }
+    if (url.pathname === '/api/dilution') {
+      this.serveLookup(opts.dilution, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'SEC_USER_AGENT is not set');
+      return;
+    }
+    if (url.pathname === '/api/profile') {
+      this.serveLookup(opts.profile, (url.searchParams.get('symbol') ?? '').toUpperCase(), res, 'Set SEC_USER_AGENT (and optionally Alpaca keys)');
+      return;
+    }
+    if (url.pathname === '/api/bars') {
+      const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(opts.store.getBars(symbol)));
+      return;
+    }
+    if (url.pathname === '/api/signals') {
+      const symbol = (url.searchParams.get('symbol') ?? '').toUpperCase();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(opts.fadeSignals?.(symbol) ?? []));
+      return;
+    }
+    if (opts.webRoot && (req.method === 'GET' || req.method === 'HEAD') && serveStatic(opts.webRoot, url.pathname, res)) return;
+    res.writeHead(404).end();
   }
 
   start(): void {
@@ -156,7 +185,10 @@ export class ClientGateway {
     if (snapshots.length) this.broadcast({ type: 'snapshots', data: snapshots });
     if (snapshots.length) this.sendChartBars(snapshots.map((s) => s.symbol));
     if (halts.length) this.broadcast({ type: 'halts', data: halts });
-    if (alerts.length) this.broadcast({ type: 'alerts', data: alerts });
+    if (alerts.length) {
+      this.broadcast({ type: 'alerts', data: alerts });
+      this.opts.onAlerts?.(alerts);
+    }
   }
 
   /** Symbol lookups backed by SEC / Alpaca: 503 when not configured, 404 for unknown tickers. */

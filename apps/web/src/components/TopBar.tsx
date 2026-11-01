@@ -5,7 +5,10 @@ import {
   Calculator,
   ChartCandlestick,
   Check,
+  CircleUserRound,
   Download,
+  ListPlus,
+  LogOut,
   FolderOpen,
   Crosshair,
   LayoutGrid,
@@ -27,6 +30,8 @@ import {
 import type { MarketSession } from '@deltascan/shared';
 import clsx from 'clsx';
 import { marketData } from '../lib/marketData';
+import { signOut } from '../lib/session';
+import { useSessionStore } from '../store/sessionStore';
 import {
   activeLayoutName,
   addAlertWindow,
@@ -36,6 +41,7 @@ import {
   addFilterWindow,
   addHaltWindow,
   addNewHighsWindow,
+  addWatchlistWindow,
   addSymbolWindow,
   deleteLayout,
   listLayouts,
@@ -207,6 +213,10 @@ function NewWindowMenu() {
           <MenuItem onClick={() => (addAlertWindow(), close())}>
             <Siren className="size-3.5 text-warn" />
             Alert window
+          </MenuItem>
+          <MenuItem onClick={() => (addWatchlistWindow(), close())}>
+            <ListPlus className="size-3.5 text-accent" />
+            My watchlist
           </MenuItem>
           <MenuItem onClick={() => (addNewHighsWindow(), close())}>
             <MountainSnow className="size-3.5 text-up" />
@@ -442,6 +452,34 @@ function SettingsMenu() {
   );
 }
 
+/** Shown only when signed in: the account's email and Sign out. */
+function AccountMenu() {
+  const user = useSessionStore((s) => s.session?.user);
+  if (!user) return null;
+  return (
+    <Popover
+      align="right"
+      trigger={() => (
+        <span className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg" title={user.email}>
+          <CircleUserRound className="size-4" />
+        </span>
+      )}
+    >
+      {() => (
+        <div className="w-56">
+          <MenuLabel>Signed in as</MenuLabel>
+          <p className="truncate px-2.5 pb-2 text-[12px] text-fg">{user.email}</p>
+          <div className="my-1 h-px bg-line" />
+          <MenuItem onClick={() => void signOut().finally(() => location.reload())}>
+            <LogOut className="size-3.5" />
+            Sign out
+          </MenuItem>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
 export function TopBar() {
   const provider = useUiStore((s) => s.provider);
   const sound = useUiStore((s) => s.settings.sound);
@@ -482,6 +520,7 @@ export function TopBar() {
           </IconButton>
           <LayoutMenu />
           <SettingsMenu />
+          <AccountMenu />
         </div>
       </div>
     </header>

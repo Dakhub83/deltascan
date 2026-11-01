@@ -43,6 +43,9 @@ export const BULLISH = {
   bottomUnderHighPct: 3,
 };
 
+/** Indicator scans for the short side: overextended runners, and the trend turning on the 1-minute. */
+export const INDICATOR_SCANS = { overboughtRsi: 80, overboughtMinChangePct: 10, bearCrossWithinMin: 15, bearCrossMinChangePct: 10 };
+
 const pctUnder = (low: number | null, ref: number | null) => (low != null && ref ? ((ref - low) / ref) * 100 : Number.NaN);
 
 export const PRESETS: ScannerPreset[] = [
@@ -145,6 +148,33 @@ export const PRESETS: ScannerPreset[] = [
       n(s.chg5mPct) > 0,
     sort: { colId: 'offLowPct', sort: 'desc' },
     columns: ['symbol', 'tier', 'last', 'offLowPct', 'low', 'changePct', 'chg5mPct', 'hodDistPct', 'rvol'],
+  },
+  {
+    id: 'rsi-overbought',
+    title: 'RSI Overbought Runners',
+    description: `Up ≥ ${INDICATOR_SCANS.overboughtMinChangePct}% with 1-min RSI ≥ ${INDICATOR_SCANS.overboughtRsi}: stretched, watch for the top`,
+    icon: Gauge,
+    filter: (s) => n(s.changePct) >= INDICATOR_SCANS.overboughtMinChangePct && n(s.indicators?.rsi14) >= INDICATOR_SCANS.overboughtRsi,
+    sort: { colId: 'rsi14', sort: 'desc' },
+    columns: ['symbol', 'rsi14', 'last', 'changePct', 'chg5mPct', 'hodDistPct', 'fadeStage', 'rvol', 'floatShares'],
+    emptyText: `No runner is that stretched right now (RSI ≥ ${INDICATOR_SCANS.overboughtRsi} needs about 20 minutes of bars).`,
+  },
+  {
+    id: 'ema-bear-cross',
+    title: 'EMA 9/20 Bear Cross',
+    description: `Up ≥ ${INDICATOR_SCANS.bearCrossMinChangePct}% on the day, 1-min EMA 9 crossed under EMA 20 in the last ${INDICATOR_SCANS.bearCrossWithinMin} min`,
+    icon: TrendingDown,
+    filter: (s) => {
+      const cross = s.indicators?.emaCross;
+      return (
+        n(s.changePct) >= INDICATOR_SCANS.bearCrossMinChangePct &&
+        cross?.dir === 'bear' &&
+        Date.now() - (cross.at + 60_000) <= INDICATOR_SCANS.bearCrossWithinMin * 60_000
+      );
+    },
+    sort: { colId: 'emaCross', sort: 'asc' },
+    columns: ['symbol', 'emaCross', 'last', 'changePct', 'offHighPct', 'vwapDistPct', 'fadeStage', 'rsi14', 'rvol'],
+    emptyText: 'No runner has turned down on the 1-minute EMAs lately.',
   },
   {
     id: 'premarket-gainers',

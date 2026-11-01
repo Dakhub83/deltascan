@@ -46,20 +46,58 @@ export interface NamedLayout {
   layout: SerializedDockview;
 }
 
-function readNamed(): Record<string, NamedLayout> {
-  try {
-    return JSON.parse(localStorage.getItem(NAMED_KEY) ?? '{}') as Record<string, NamedLayout>;
-  } catch {
-    return {};
-  }
+/**
+ * Named layouts live on the server (per account, every device). This copy keeps the Layouts menu
+ * instant; writes go to the server in the background and report failures in the notice bar.
+ */
+const named = new Map<string, NamedLayout>();
+const layoutUrl = (name: string) => `/api/layouts/${encodeURIComponent(name)}`;
+
+function reportFailure(action: string) {
+  return (err: unknown) => useUiStore.getState().showNotice(`Couldn't ${action} on the server: ${(err as Error).message}`, 'warn');
 }
 
-function writeNamed(all: Record<string, NamedLayout>): boolean {
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(url, init);
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+  return res;
+}
+
+function putLayout(entry: NamedLayout): Promise<unknown> {
+  return request(layoutUrl(entry.name), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ savedAt: entry.savedAt, layout: entry.layout }),
+  });
+}
+
+/**
+ * Loads the account's saved layouts. Layouts saved in this browser before they moved to the
+ * server are uploaded once, then removed from the browser.
+ */
+export async function syncLayouts(): Promise<void> {
+  const list = (await (await request('/api/layouts')).json()) as { name: string; updatedAt: number }[];
+  const loaded = await Promise.all(
+    list.map(async ({ name, updatedAt }) => {
+      const data = (await (await request(layoutUrl(name))).json()) as { savedAt?: number; layout: SerializedDockview };
+      return { name, savedAt: data.savedAt ?? updatedAt, layout: data.layout } satisfies NamedLayout;
+    }),
+  );
+  named.clear();
+  for (const l of loaded) named.set(l.name, l);
+
+  let local: Record<string, NamedLayout> = {};
   try {
-    localStorage.setItem(NAMED_KEY, JSON.stringify(all));
-    return true;
+    local = JSON.parse(localStorage.getItem(NAMED_KEY) ?? '{}') as Record<string, NamedLayout>;
   } catch {
-    return false;
+    /* unreadable: nothing to move */
+  }
+  const toUpload = Object.values(local).filter((l) => l?.name && l.layout && !named.has(l.name));
+  await Promise.all(toUpload.map((l) => putLayout(l).then(() => named.set(l.name, l))));
+  try {
+    localStorage.removeItem(NAMED_KEY);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -83,21 +121,22 @@ export function activeLayoutName(): string | null {
 
 /** Saved layouts, newest first. */
 export function listLayouts(): NamedLayout[] {
-  return Object.values(readNamed()).sort((a, b) => b.savedAt - a.savedAt);
+  return [...named.values()].sort((a, b) => b.savedAt - a.savedAt);
 }
 
 /** Saves the current arrangement under `name`, replacing any layout with that name. */
 export function saveLayoutAs(name: string): boolean {
-  if (!api || !name.trim()) return false;
-  const all = readNamed();
-  all[name.trim()] = { name: name.trim(), savedAt: Date.now(), layout: api.toJSON() };
-  if (!writeNamed(all)) return false;
-  setActiveName(name.trim());
+  const trimmed = name.trim();
+  if (!api || !trimmed || trimmed.length > 80) return false;
+  const entry: NamedLayout = { name: trimmed, savedAt: Date.now(), layout: api.toJSON() };
+  named.set(trimmed, entry);
+  putLayout(entry).catch(reportFailure(`save the layout "${trimmed}"`));
+  setActiveName(trimmed);
   return true;
 }
 
 export function loadLayout(name: string): boolean {
-  const saved = readNamed()[name];
+  const saved = named.get(name);
   if (!api || !saved) return false;
   try {
     api.fromJSON(saved.layout);
@@ -110,9 +149,8 @@ export function loadLayout(name: string): boolean {
 }
 
 export function deleteLayout(name: string): void {
-  const all = readNamed();
-  delete all[name];
-  writeNamed(all);
+  named.delete(name);
+  request(layoutUrl(name), { method: 'DELETE' }).catch(reportFailure(`delete the layout "${name}"`));
   if (activeLayoutName() === name) setActiveName(null);
 }
 
@@ -291,6 +329,10 @@ export function addShortCalcWindow(): void {
 
 export function addChartWindow(): void {
   api?.addPanel({ id: `chart-${uid()}`, component: 'chart', title: 'Chart', params: {}, floating: { ...floating(), width: 820, height: 480 } });
+}
+
+export function addWatchlistWindow(): void {
+  api?.addPanel({ id: `watchlist-${uid()}`, component: 'watchlist', title: 'My watchlist', params: {}, floating: { ...floating(), width: 720, height: 340 } });
 }
 
 export function addNewHighsWindow(): void {

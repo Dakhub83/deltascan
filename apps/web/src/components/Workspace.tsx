@@ -11,6 +11,7 @@ import {
   ChartCandlestick,
   Crosshair,
   IdCard,
+  ListPlus,
   MountainSnow,
   ExternalLink,
   Maximize2,
@@ -27,6 +28,7 @@ import { FilterPanel } from '../panels/FilterPanel';
 import { AlertPanel } from '../panels/AlertPanel';
 import { HaltPanel } from '../panels/HaltPanel';
 import { NewHighsPanel } from '../panels/NewHighsPanel';
+import { WatchlistPanel } from '../panels/WatchlistPanel';
 import { ChartPanel } from '../panels/ChartPanel';
 import { DilutionPanel } from '../panels/DilutionPanel';
 import { ShortCalcPanel } from '../panels/ShortCalcPanel';
@@ -44,6 +46,7 @@ const components = {
   symbol: () => <SymbolPanel />,
   halts: () => <HaltPanel />,
   newhighs: NewHighsPanel,
+  watchlist: () => <WatchlistPanel />,
   chart: ChartPanel,
   dilution: DilutionPanel,
   shortcalc: ShortCalcPanel,
@@ -55,6 +58,7 @@ function iconFor(id: string, params: Record<string, unknown> | undefined) {
   if (id.startsWith('symbol')) return Crosshair;
   if (id.startsWith('halts')) return OctagonPause;
   if (id.startsWith('newhighs')) return MountainSnow;
+  if (id.startsWith('watchlist')) return ListPlus;
   if (id.startsWith('chart')) return ChartCandlestick;
   if (id.startsWith('dilution')) return ShieldAlert;
   if (id.startsWith('shortcalc')) return Calculator;

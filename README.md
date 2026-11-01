@@ -13,9 +13,12 @@ deltascan/
 │  │  ├─ src/ingestion/       ReconnectingSocket, providers (alpaca, mock), IngestionService
 │  │  ├─ src/cache/           SymbolStore — in-memory live state + dirty-set throttling
 │  │  ├─ src/scanner/         AlertEngine — edge-triggered alerts with cooldowns
-│  │  ├─ src/gateway/         ClientGateway — batched deltas to the UI every 250 ms
+│  │  ├─ src/gateway/         ClientGateway — batched deltas to the UI every 250 ms; AppApi — accounts, watchlists, layouts
+│  │  ├─ src/db/              AppDb — SQLite (users, sessions, watchlists, layouts, alert history)
+│  │  ├─ src/auth/            Auth — password hashing, session cookies, sign-in rate limit
 │  │  └─ test/
-│  └─ web/                    React UI (http://localhost:5173)
+│  └─ web/                    landing page (http://localhost:5173) and dashboard (/app/)
+│     ├─ src/landing/         the marketing page
 │     ├─ src/lib/marketData.ts   single WS client; ticks live outside React, flushed per frame
 │     ├─ src/scanners/        column catalog, cell renderers, scanner presets
 │     ├─ src/panels/          Filter, Alert and Symbol windows
@@ -23,6 +26,7 @@ deltascan/
 ├─ packages/
 │  └─ shared/                 types shared by server and web
 ├─ docs/ARCHITECTURE.md
+├─ docs/DEPLOY.md           putting it online over HTTPS (Docker + Caddy)
 └─ .env.example
 ```
 
@@ -31,7 +35,7 @@ deltascan/
 ```bash
 npm install
 npm run dev              # server + UI, simulated market data, no keys needed
-# open http://localhost:5173
+# landing page: http://localhost:5173    dashboard: http://localhost:5173/app/
 npm test
 npm run typecheck
 ```
@@ -44,7 +48,7 @@ npm run typecheck
 - **Clicking a row** selects that symbol everywhere and loads it in the Symbol panel. Arrow keys also work.
 - **Alert chips** filter by type. The speaker on each chip turns that type's sound on or off. The first sound plays after your first click on the page, because browsers block audio before that.
 - Layout, column setup and settings are saved automatically. The **Layouts** menu (grid icon, top right) has three options:
-  - **Named layouts:** saved in this browser.
+  - **Named layouts:** saved on the server under your account, so they follow you to other devices. Layouts saved in the browser before this are moved there the first time the dashboard opens.
   - **Save layout to file…:** opens a Save dialog in Chrome and Edge so you can pick the folder; other browsers download the file. **Open layout file…** loads a saved file back.
   - **Default layout:** resets everything.
 
@@ -124,6 +128,26 @@ The data comes free from SEC EDGAR. SEC requires a contact on every request, so 
 **Pre-market Gainers** ranks stocks by their move before the 9:30 open. **After-hours Movers** ranks them by their move since the 4 pm close. On live data they fill in during those hours (4:00–9:30 and 16:00–20:00 ET). To try them on simulated data at any time, set `MOCK_SESSION=pre` or `MOCK_SESSION=post` in `.env` and restart `npm run dev`.
 
 Outside regular hours, scans built on the regular session (Gap Ups, RVOL, HOD, VWAP) and their alerts stay quiet, because those numbers only count 9:30–16:00 trading.
+
+### Watchlist, indicators and saved data
+
+- **+ Window → My watchlist** keeps the tickers you add, saved on the server. Watched symbols stay in the data feed even when they aren't moving.
+- Every scanner window has an **Indicators** button next to Price and Float. It filters on RSI(14), the EMA 9/20 cross (bullish or bearish, within N minutes) and relative volume. All three are computed on completed 1-minute bars. The **RSI**, **EMA 9/20**, **EMA 9** and **EMA 20** columns are in the columns menu.
+- Two scanners use them: **RSI Overbought Runners** (up 10 %+ with RSI ≥ 80) and **EMA 9/20 Bear Cross** (up 10 %+, the 9 crossed under the 20 in the last 15 minutes).
+- Alerts are saved to the database, so the day's alert feed survives a server restart.
+
+### Accounts
+
+Locally, sign-in is off: there's no login screen, and your watchlist and layouts are saved to a built-in local account. Data lives in `data/scanner.db` (`DB_PATH`).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `AUTH_REQUIRED` | `false` | Require sign-in for the dashboard, its API and the live data socket. Turn it on before the app is reachable from the internet. |
+| `ALLOW_SIGNUP` | `false` | Let anyone create an account. When it's off, only the first account can be created. |
+| `COOKIE_SECURE` / `TRUST_PROXY` | `false` | Set both when serving over HTTPS behind a reverse proxy. |
+| `SERVE_WEB` | `false` | Serve the built site (`npm run build`) from the server port, for production. |
+
+To put DeltaScan online, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Using live Alpaca data
 

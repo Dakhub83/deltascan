@@ -41,6 +41,14 @@ export abstract class MarketDataProvider extends EventEmitter<ProviderEvents> {
     if (added.length) this.onSubscribe(added);
   }
 
+  /**
+   * Keeps symbols in the feed (watchlists). A provider with a tight symbol limit may follow them
+   * less closely than `subscribe`d ones; by default it's the same thing.
+   */
+  track(symbols: string[]): void {
+    this.subscribe(symbols);
+  }
+
   unsubscribe(symbols: string[]): void {
     const removed = symbols.map((s) => s.toUpperCase()).filter((s) => this.subscribed.delete(s));
     if (removed.length) this.onUnsubscribe(removed);

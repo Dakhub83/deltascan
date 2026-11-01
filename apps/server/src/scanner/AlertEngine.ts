@@ -155,6 +155,16 @@ export class AlertEngine {
     return [...this.history].reverse();
   }
 
+  /**
+   * Reloads saved alerts (newest first) after a restart, so connecting clients see the day's
+   * feed. Cooldowns resume from them too; nothing is re-sent as new.
+   */
+  restore(alerts: readonly Alert[]): void {
+    const oldestFirst = [...alerts].reverse().slice(-this.historySize);
+    this.history.splice(0, this.history.length, ...oldestFirst);
+    for (const a of oldestFirst) this.lastFired.set(`${a.symbol}:${a.type}`, a.timestamp);
+  }
+
   private fire(
     type: AlertType,
     t: Pick<Trade, 'symbol' | 'price' | 'timestamp'>,

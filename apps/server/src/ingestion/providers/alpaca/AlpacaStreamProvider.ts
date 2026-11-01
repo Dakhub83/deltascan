@@ -142,7 +142,8 @@ export class AlpacaStreamProvider extends MarketDataProvider {
     if (this.started) void this.bootstrap(symbols);
   }
 
-  private track(symbols: string[]): void {
+  /** With the radar: a row fed by minute bars that competes for a live slot, instead of a pinned one. */
+  override track(symbols: string[]): void {
     this.internalAdd = true;
     try {
       this.subscribe(symbols);

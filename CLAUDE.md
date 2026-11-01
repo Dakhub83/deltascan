@@ -7,7 +7,8 @@ A real-time scanner for day and swing trading, modelled on Trade Ideas, Scanz an
 ## Commands
 
 ```bash
-npm run dev          # server (ws://localhost:4000/ws) + web (http://localhost:5173), mock data, no keys
+npm run dev          # server (ws://localhost:4000/ws) + web: landing http://localhost:5173, dashboard /app/, mock data
+npm run build && SERVE_WEB=true npm start   # production: the server serves the built site (docs/DEPLOY.md)
 npm test             # vitest: apps/server/test and apps/web/src/**/*.test.ts
 npm run typecheck    # all workspaces
 ```
@@ -16,7 +17,8 @@ npm run typecheck    # all workspaces
 
 - `packages/shared/src/index.ts` holds **every** type that crosses the wire (`SymbolSnapshot`, `Alert`, `ServerMessage`, …). Change it first, then fix both apps.
 - `apps/server`: provider (`alpaca` | `mock`) → `IngestionService` → `SymbolStore` (dirty set) → `AlertEngine` / `HaltTracker` → `ClientGateway` (flushes deltas every 250 ms). `src/index.ts` wires them together.
-- `apps/web`: React + dockview + AG Grid + Zustand. Ticks go into `lib/marketData.ts` and stay out of React state; they're flushed once per animation frame.
+- `apps/web`: React + dockview + AG Grid + Zustand. Ticks go into `lib/marketData.ts` and stay out of React state; they're flushed once per animation frame. Two Vite pages: `index.html` (landing, `src/landing/`) and `app/index.html` (dashboard, `src/main.tsx`); colour tokens shared in `src/theme.css`.
+- Accounts: `db/AppDb.ts` (SQLite via the built-in `node:sqlite`, loaded with `createRequire` because Vite strips the `node:` prefix; numbered `MIGRATIONS`, never edit a shipped one), `auth/Auth.ts` (scrypt, sha256-hashed session tokens in an HttpOnly cookie, sign-in rate limit), `gateway/AppApi.ts` (`/api/auth/*`, `/api/watchlist`, `/api/layouts/:name`, `/api/alerts/history`). With `AUTH_REQUIRED` off every request is the built-in local account; with it on, `/api/*` and the `/ws` upgrade need a session. `components/AuthGate.tsx` starts the data socket only once the server lets the user in.
 
 ## Conventions
 
@@ -99,6 +101,8 @@ npm run typecheck    # all workspaces
 - **Bullish scanners** (Trade Ideas-style, the early warning for future fades): New Highs on 2× RV, Up 50¢ in 5 Min, Under $20 Moving Up Fast, Turbo Breaks Up, Rallying off the Bottom. Thresholds are in `BULLISH` in `presets.ts` (tests in `presets.test.ts`); new columns `chg5mUsd` and `offLowPct`. Scans needing daily bars (yearly highs, up 5 days, MA breakouts), RSI or an earnings calendar wait on ARCHITECTURE steps 2–3.
 
 - **New highs window** (Trade Ideas' repeating New High alert window): `panels/NewHighsPanel.tsx`, logic in `lib/newHighs.ts` (tests in `newHighs.test.ts`), **+ Window → New highs (NHOD)**. Built client-side from the `new_high` alerts (one per symbol per minute at most, the cooldown). **Feed** lists every NHOD with its number that day (`# Today`) and repeats in the last 10 min (🔥 at 3+); **Leaders** keeps one row per stock, most repeats first. `Last NHOD` turns **QUIET** after 3 min without a new high once a stock pushed twice: the front side stalling, the trader's cue to watch for TOPPING. Price / Float / RVOL / Repeats filters use the live snapshot and are saved with the layout (`NewHighsPanelParams`). Counts only cover the alerts the client holds (the server's last 500 on connect).
+- **Indicators** (`scanner/indicators.ts`, tests in `test/indicators.test.ts`): RSI(14, Wilder), EMA 9/20 and the latest 9/20 cross on completed 1-minute bars, recomputed only when a bar completes, on `SymbolSnapshot.indicators`. Web: the **Indicators** toolbar button (`scanners/indicatorFilter.ts`, `FilterPanelParams.indicators`), columns `rsi14` / `emaCross` / `ema9` / `ema20`, scanners **RSI Overbought Runners** and **EMA 9/20 Bear Cross** (`INDICATOR_SCANS`).
+- **My watchlist** (`panels/WatchlistPanel.tsx`, `store/watchlistStore.ts`): saved per account; every user's symbols are `provider.track`ed (with the radar: a bar-fed row competing for a live slot). Named layouts are on the server too (`syncLayouts` in `lib/layout.ts`, a one-time upload of the old localStorage ones). Alerts are saved (`onAlerts`) and reloaded on restart (`AlertEngine.restore`).
 - **Price filter**: each scanner window has its own price range (the **$ Price** button in its toolbar), applied on top of the scanner's filter, in `FilterPanelParams.priceRange`, so it's saved with layouts. Logic and quick ranges are in `scanners/priceRange.ts`. Symbols with no price yet are hidden while a range is set. A **Float** button beside it works the same way (`FilterPanelParams.floatRange`, `scanners/floatRange.ts`; bounds typed in millions or with K/M); unknown floats pass, because the live feed has no float data yet.
 
 ### Still to do (in order)
@@ -107,7 +111,7 @@ npm run typecheck    # all workspaces
 2. Later: check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
 3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
 
-Status: **tests pass (99 server, 46 web), typecheck clean.**
+Status: **tests pass (112 server, 51 web), typecheck clean.**
 
 ### After this feature
 Continue the plan in docs/ARCHITECTURE.md §5. The open steps are 1 (live Alpaca verification), 2 (REST bootstrap), 3 (indicators), 4 (reference data + SQLite) and 5 (server-side scanner engine).

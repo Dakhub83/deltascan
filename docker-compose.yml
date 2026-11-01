@@ -1,0 +1,40 @@
+# Production: DeltaScan behind Caddy, which gets and renews the HTTPS certificate automatically.
+# 1. Point your domain's DNS A record at this server.  2. Put your settings in .env (see .env.example)
+# and DOMAIN=scanner.example.com.  3. docker compose up -d --build.  Full guide: docs/DEPLOY.md
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVE_WEB: 'true'
+      AUTH_REQUIRED: 'true'
+      COOKIE_SECURE: 'true'
+      TRUST_PROXY: 'true'
+      DB_PATH: /data/scanner.db
+      SERVER_PORT: '4000'
+    volumes:
+      - deltascan-data:/data
+    expose:
+      - '4000'
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. DOMAIN=scanner.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  deltascan-data:
+  caddy-data:
+  caddy-config:
