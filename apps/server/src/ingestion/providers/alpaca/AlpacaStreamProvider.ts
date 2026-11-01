@@ -6,6 +6,7 @@ import { MarketDataProvider } from '../MarketDataProvider';
 import type { AlpacaRest } from './AlpacaRest';
 import { MOVERS_MAX, isCommonStock, runBootstrap } from './bootstrap';
 import { MoverRadar, barPrints, planLive, type RadarOptions } from './MoverRadar';
+import { PrevAfterHoursScanner, type PrevAfterHoursOptions } from './prevAfterHours';
 import { haltStateOf, parseAlpacaTimestamp, type AlpacaMessage } from './messages';
 
 export interface AlpacaStreamOptions {
@@ -34,6 +35,11 @@ export interface AlpacaStreamOptions {
    * rotates the live trade slots to whatever is moving hardest. Needs `movers`.
    */
   radar?: RadarOptions;
+  /**
+   * Scans the previous session's after-hours movers market-wide (SIP history, free once 15
+   * minutes old), attaches them to every row and adds the top gainers as rows (with the radar).
+   */
+  prevAfterHours?: PrevAfterHoursOptions;
 }
 
 /** Rows the radar and gainers list may add in a day; each is a scanner row followed by minute bars at least. */
@@ -45,6 +51,8 @@ const SWAP_MARGIN_PCT = 2;
 /** Bars arrive in a burst just after each minute; rotation runs once the burst settles. */
 const REBALANCE_DEBOUNCE_MS = 1_500;
 const MINUTE = 60_000;
+/** How often to look for a newly completed after-hours session to scan. */
+const PREV_AH_CHECK_MS = 15 * MINUTE;
 
 
 // Alpaca stream error codes that retrying cannot fix.
@@ -79,11 +87,14 @@ export class AlpacaStreamProvider extends MarketDataProvider {
   private gainersRank: string[] = [];
   private internalAdd = false;
   private rebalanceTimer: NodeJS.Timeout | null = null;
+  private readonly prevAh: PrevAfterHoursScanner | null;
+  private prevAhTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: AlpacaStreamOptions) {
     super();
     this.log = opts.logger.child({ provider: this.name });
     this.radar = opts.radar && opts.movers && opts.rest ? new MoverRadar(opts.radar) : null;
+    this.prevAh = opts.prevAfterHours && opts.rest ? new PrevAfterHoursScanner(opts.rest, opts.prevAfterHours) : null;
     const host = opts.sandbox ? 'stream.data.sandbox.alpaca.markets' : 'stream.data.alpaca.markets';
     // The 24/7 test stream is a "feed" at /v2/test.
     this.socket = new ReconnectingSocket({
@@ -111,12 +122,17 @@ export class AlpacaStreamProvider extends MarketDataProvider {
       void this.discoverMovers();
       this.moversTimer = setInterval(() => void this.discoverMovers(), this.opts.movers.refreshMs);
     }
+    if (this.prevAh) {
+      void this.scanPrevAfterHours();
+      this.prevAhTimer = setInterval(() => void this.scanPrevAfterHours(), PREV_AH_CHECK_MS);
+    }
   }
 
   stop(): void {
     if (this.moversTimer) clearInterval(this.moversTimer);
     if (this.rebalanceTimer) clearTimeout(this.rebalanceTimer);
-    this.moversTimer = this.rebalanceTimer = null;
+    if (this.prevAhTimer) clearInterval(this.prevAhTimer);
+    this.moversTimer = this.rebalanceTimer = this.prevAhTimer = null;
     this.socket.stop();
   }
 
@@ -140,6 +156,45 @@ export class AlpacaStreamProvider extends MarketDataProvider {
       this.scheduleRebalance();
     }
     if (this.started) void this.bootstrap(symbols);
+    this.attachPrevAfterHours(symbols);
+  }
+
+  private async scanPrevAfterHours(): Promise<void> {
+    const scanner = this.prevAh;
+    if (!scanner) return;
+    try {
+      const startedAt = Date.now();
+      const top = await scanner.refresh(startedAt, this.symbols);
+      if (!top) return;
+      this.log.info({ session: scanner.date, top: top.slice(0, 10), seconds: Math.round((Date.now() - startedAt) / 1000) }, 'previous after-hours scanned');
+      this.attachPrevAfterHours(this.symbols);
+      // Rows for the top gainers. Without the radar every row takes a live slot, so only with it.
+      const room = Math.max(0, MAX_TRACKED - this.subscribed.size);
+      const added = this.radar ? top.filter((s) => !this.subscribed.has(s)).slice(0, room) : [];
+      if (added.length) this.track(added);
+    } catch (err) {
+      this.log.warn({ err: (err as Error).message }, 'previous after-hours scan failed');
+    }
+  }
+
+  /** Puts the previous after-hours session on the rows, fetching exact numbers when missing. */
+  private attachPrevAfterHours(symbols: readonly string[]): void {
+    const scanner = this.prevAh;
+    if (!scanner?.date) return;
+    const emit = (list: readonly string[]) => {
+      for (const symbol of list) {
+        const prevAfterHours = scanner.get(symbol);
+        if (prevAfterHours) this.emit('reference', { symbol, prevAfterHours });
+      }
+    };
+    emit(symbols);
+    const missing = symbols.filter((s) => !scanner.get(s));
+    if (missing.length) {
+      scanner
+        .ensure(missing)
+        .then(emit)
+        .catch((err: Error) => this.log.warn({ err: err.message }, 'previous after-hours lookup failed'));
+    }
   }
 
   /** With the radar: a row fed by minute bars that competes for a live slot, instead of a pinned one. */

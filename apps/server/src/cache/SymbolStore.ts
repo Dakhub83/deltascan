@@ -246,6 +246,7 @@ export class SymbolStore {
     s.marketCap = r.marketCap ?? s.marketCap;
     s.shortInterestPct = r.shortInterestPct ?? s.shortInterestPct;
     s.avgVolume = r.avgVolume ?? s.avgVolume;
+    s.prevAfterHours = r.prevAfterHours ?? s.prevAfterHours;
     s.rvol = this.rvol(s, Date.now());
     this.dirty.add(r.symbol);
   }
@@ -419,6 +420,7 @@ function emptySnapshot(symbol: string): SymbolSnapshot {
     postChangePct: null,
     fade: null,
     indicators: null,
+    prevAfterHours: null,
     lastTradeAt: null,
     updatedAt: Date.now(),
   };

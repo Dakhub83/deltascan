@@ -44,6 +44,10 @@ const schema = z
     ALPACA_RADAR: bool(true),
     // A move of this many % (up or down) inside 5 minutes puts a stock on the radar.
     ALPACA_RADAR_MOVE_PCT: z.coerce.number().positive().default(4),
+    // The previous session's top after-hours gainers added as rows each morning (0 = off).
+    ALPACA_PREV_AH_TOP: z.coerce.number().int().min(0).max(100).default(30),
+    // Minimum after-hours gain (vs the 4 PM close) for that list.
+    ALPACA_PREV_AH_MIN_PCT: z.coerce.number().positive().default(5),
     // Trade + quote subscriptions allowed by the plan (bars don't count): 30 on free iex.
     ALPACA_MAX_SYMBOLS: int(30),
 

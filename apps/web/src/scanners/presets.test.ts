@@ -59,3 +59,15 @@ describe('bullish scanners', () => {
     expect(passes('rallying-off-bottom', snap({ ...base, last: 9.5, chg5mPct: -0.5 }))).toBe(false);
   });
 });
+
+describe('Prev Day AH Gainers', () => {
+  const ah = (changePct: number, volume: number) => ({ date: '2026-10-30', close: 2, last: 2 * (1 + changePct / 100), high: 3, volume, changePct });
+
+  it("lists yesterday's after-hours runners with real volume", () => {
+    expect(passes('prev-ah-gainers', snap({ prevAfterHours: ah(30, 250_000) }))).toBe(true);
+    expect(passes('prev-ah-gainers', snap({ prevAfterHours: ah(3, 250_000) }))).toBe(false); // too small a move
+    expect(passes('prev-ah-gainers', snap({ prevAfterHours: ah(30, 5_000) }))).toBe(false); // a few odd prints
+    expect(passes('prev-ah-gainers', snap({ prevAfterHours: ah(-30, 250_000) }))).toBe(false);
+    expect(passes('prev-ah-gainers', snap({ prevAfterHours: null }))).toBe(false);
+  });
+});

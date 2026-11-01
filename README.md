@@ -164,6 +164,8 @@ On startup (and after every reconnect) the server loads each symbol's previous c
 | `ALPACA_MOVERS_REFRESH_SEC` | `60` | How often the gainers list is checked. Rows are only added, never dropped mid-session. |
 | `ALPACA_RADAR` | `true` | Watch every stock's minute bars and rotate the live slots to the fastest movers. `false` = gainers list only, added until the limit is full. |
 | `ALPACA_RADAR_MOVE_PCT` | `4` | A move of this many % (up or down) within 5 minutes puts a stock on the radar. |
+| `ALPACA_PREV_AH_TOP` | `30` | After each session ends, the whole market's after-hours moves are read from full-market history (free on Alpaca once 15 minutes old). Every row gets them (**Prev AH %**, **Prev AH Last**, **Prev AH High**, **Prev AH Vol** columns) and the top gainers become rows for the **Prev Day AH Gainers** scanner. `0` turns it off. |
+| `ALPACA_PREV_AH_MIN_PCT` | `5` | Minimum after-hours gain, vs the 4 PM price, for that list. |
 | `ALPACA_MAX_SYMBOLS` | `30` | The plan's limit on trade + quote subscriptions, `WATCHLIST` included. 30 on the free `iex` feed (bars don't count); raise it on a paid `sip` plan. |
 | `ALPACA_QUOTES` | `false` | Stream bid/ask quotes too (spread, quote card). On the free plan this halves the symbols, since trades and quotes share the limit. |
 

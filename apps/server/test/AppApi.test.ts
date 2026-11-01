@@ -121,7 +121,7 @@ describe('account API', () => {
     expect((await call('POST', '/api/auth/login', { email: 'a@b.co', password: 'longenough' })).status).toBe(200);
     for (let i = 0; i < 10; i++) expect((await call('POST', '/api/auth/login', { email: 'a@b.co', password: 'wrong-guess' })).status).toBe(401);
     expect((await call('POST', '/api/auth/login', { email: 'a@b.co', password: 'longenough' })).status).toBe(429);
-  });
+  }, 20_000); // a dozen scrypt checks, which are slow on purpose
 
   it('guards the data behind the session and ends it on sign-out', async () => {
     const { call, watched } = await start();

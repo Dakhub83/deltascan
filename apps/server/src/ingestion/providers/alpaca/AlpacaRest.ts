@@ -21,11 +21,29 @@ export interface AlpacaRawSnapshot {
   prevDailyBar?: AlpacaRawBar;
 }
 
+/** A trading day; `open` / `close` are ET wall-clock times ("09:30", "16:00", "13:00" on half days). */
+export interface AlpacaCalendarDay {
+  date: string;
+  open: string;
+  close: string;
+}
+
+export interface AlpacaAsset {
+  symbol: string;
+  exchange: string;
+  tradable: boolean;
+  status: string;
+}
+
 export interface AlpacaRestOptions {
   keyId: string;
   secretKey: string;
   feed: 'iex' | 'sip';
   sandbox: boolean;
+  /** Paper account: the trading API (calendar, assets) is at paper-api. */
+  paper?: boolean;
+  /** Pause between requests in long scans, to stay under the plan's rate limit (200/min on free). */
+  pauseMs?: number;
   /** Injectable for tests. */
   fetch?: typeof fetch;
 }
@@ -38,11 +56,23 @@ const MAX_PAGES = 50;
 
 export class AlpacaRest {
   private readonly base: string;
+  private readonly tradingBase: string;
   private readonly fetch: typeof fetch;
 
   constructor(private readonly opts: AlpacaRestOptions) {
     this.base = opts.sandbox ? 'https://data.sandbox.alpaca.markets' : 'https://data.alpaca.markets';
+    this.tradingBase = opts.paper === false ? 'https://api.alpaca.markets' : 'https://paper-api.alpaca.markets';
     this.fetch = opts.fetch ?? fetch;
+  }
+
+  /** Trading days between two ET dates (YYYY-MM-DD), with half-day closes. */
+  async calendar(start: string, end: string): Promise<AlpacaCalendarDay[]> {
+    return this.get<AlpacaCalendarDay[]>('/v2/calendar', { start, end }, this.tradingBase);
+  }
+
+  /** Every active US equity Alpaca knows (OTC included; filter on `exchange`). */
+  async assets(): Promise<AlpacaAsset[]> {
+    return this.get<AlpacaAsset[]>('/v2/assets', { status: 'active', asset_class: 'us_equity' }, this.tradingBase);
   }
 
   /** Latest trade, today's and the previous daily bar, keyed by symbol. Unknown symbols are absent. */
@@ -58,18 +88,30 @@ export class AlpacaRest {
     return out;
   }
 
-  /** Bars since `start`, oldest first, keyed by symbol; follows `next_page_token`. */
-  async bars(symbols: readonly string[], timeframe: '1Min' | '1Day', start: Date): Promise<Record<string, AlpacaRawBar[]>> {
+  /**
+   * Bars since `start`, oldest first, keyed by symbol; follows `next_page_token`. `feed: 'sip'`
+   * works on the free plan for data older than 15 minutes (the whole market, not just IEX).
+   */
+  async bars(
+    symbols: readonly string[],
+    timeframe: '1Min' | '1Hour' | '1Day',
+    start: Date,
+    opts: { end?: Date; feed?: 'iex' | 'sip' } = {},
+  ): Promise<Record<string, AlpacaRawBar[]>> {
     const out: Record<string, AlpacaRawBar[]> = {};
+    let first = true;
     for (const chunk of chunks(symbols, SYMBOLS_PER_REQUEST)) {
+      if (!first && this.opts.pauseMs) await new Promise((r) => setTimeout(r, this.opts.pauseMs));
+      first = false;
       let pageToken: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
         const body: { bars?: Record<string, AlpacaRawBar[]> | null; next_page_token?: string | null } = await this.get('/v2/stocks/bars', {
           symbols: chunk.join(','),
           timeframe,
           start: start.toISOString(),
+          ...(opts.end ? { end: opts.end.toISOString() } : {}),
           limit: String(BARS_PAGE_LIMIT),
-          feed: this.opts.feed,
+          feed: opts.feed ?? this.opts.feed,
           adjustment: 'raw',
           sort: 'asc',
           ...(pageToken ? { page_token: pageToken } : {}),
@@ -88,8 +130,8 @@ export class AlpacaRest {
     return (body.gainers ?? []).map((g) => g.symbol);
   }
 
-  private async get<T>(path: string, query: Record<string, string>): Promise<T> {
-    const url = `${this.base}${path}?${new URLSearchParams(query)}`;
+  private async get<T>(path: string, query: Record<string, string>, base = this.base): Promise<T> {
+    const url = `${base}${path}?${new URLSearchParams(query)}`;
     const res = await this.fetch(url, {
       headers: { 'APCA-API-KEY-ID': this.opts.keyId, 'APCA-API-SECRET-KEY': this.opts.secretKey },
     });

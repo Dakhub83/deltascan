@@ -8,6 +8,7 @@ import type { MarketDataProvider } from './providers/MarketDataProvider';
 import { AlpacaRest } from './providers/alpaca/AlpacaRest';
 import { AlpacaStreamProvider } from './providers/alpaca/AlpacaStreamProvider';
 import { DEFAULT_RADAR } from './providers/alpaca/MoverRadar';
+import { DEFAULT_PREV_AH } from './providers/alpaca/prevAfterHours';
 import { MockProvider } from './providers/mock/MockProvider';
 
 /** Wires a market data provider into the local cache and alert engine, and tracks throughput. */
@@ -109,12 +110,23 @@ function createProvider(env: Env, logger: Logger): MarketDataProvider {
         rest:
           env.ALPACA_FEED === 'test'
             ? undefined
-            : new AlpacaRest({ keyId: env.ALPACA_KEY_ID!, secretKey: env.ALPACA_SECRET_KEY!, feed: env.ALPACA_FEED, sandbox: env.ALPACA_SANDBOX }),
+            : new AlpacaRest({
+                keyId: env.ALPACA_KEY_ID!,
+                secretKey: env.ALPACA_SECRET_KEY!,
+                feed: env.ALPACA_FEED,
+                sandbox: env.ALPACA_SANDBOX,
+                paper: env.ALPACA_PAPER,
+                pauseMs: 350,
+              }),
         movers:
           env.ALPACA_FEED === 'test' || env.ALPACA_MOVERS_TOP === 0
             ? undefined
             : { top: env.ALPACA_MOVERS_TOP, refreshMs: env.ALPACA_MOVERS_REFRESH_SEC * 1000, maxSymbols: env.ALPACA_MAX_SYMBOLS },
         radar: env.ALPACA_RADAR ? { ...DEFAULT_RADAR, minMovePct: env.ALPACA_RADAR_MOVE_PCT } : undefined,
+        prevAfterHours:
+          env.ALPACA_FEED === 'test' || env.ALPACA_PREV_AH_TOP === 0
+            ? undefined
+            : { ...DEFAULT_PREV_AH, top: env.ALPACA_PREV_AH_TOP, minChangePct: env.ALPACA_PREV_AH_MIN_PCT },
       });
     case 'mock':
       return new MockProvider({

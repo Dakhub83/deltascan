@@ -18,7 +18,8 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 export async function fetchSession(): Promise<SessionInfo> {
-  const res = await fetch('/api/auth/me', { signal: AbortSignal.timeout(10_000) });
+  // Generous: on a cold dev load this request queues behind hundreds of module downloads.
+  const res = await fetch('/api/auth/me', { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`Server answered ${res.status}`);
   return (await res.json()) as SessionInfo;
 }

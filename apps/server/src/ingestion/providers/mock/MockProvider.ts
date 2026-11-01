@@ -1,4 +1,4 @@
-import type { Bar, SessionSeed, TradeSession } from '@deltascan/shared';
+import type { Bar, PrevAfterHours, SessionSeed, TradeSession } from '@deltascan/shared';
 import type { Logger } from '../../../lib/logger';
 import { MarketDataProvider } from '../MarketDataProvider';
 import { MOCK_UNIVERSE, type MockProfile, type MockSymbol } from './universe';
@@ -179,6 +179,7 @@ export class MockProvider extends MarketDataProvider {
       marketCap: floatShares ? Math.round(floatShares * prevClose * uniform(1.05, 1.6)) : undefined,
       shortInterestPct: spec.float ? round(uniform(...spec.shortInterest)) : undefined,
       avgVolume,
+      prevAfterHours: prevAfterHoursFor(prevClose, inPlay, avgVolume),
     });
     this.emit('seed', seed);
     this.emit('history', meta.symbol, this.historyFor(meta.symbol, spec, seed, avgVolume));
@@ -512,6 +513,22 @@ function gaussian(): number {
 }
 
 const uniform = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+
+/** Today's gappers mostly started running after yesterday's close; the rest drifted. */
+function prevAfterHoursFor(close: number, inPlay: boolean, avgVolume: number): PrevAfterHours {
+  const changePct = inPlay ? uniform(-4, 45) : uniform(-2, 2);
+  const last = round(close * (1 + changePct / 100));
+  const day = new Date(Date.now() - 24 * 60 * 60_000);
+  while (day.getUTCDay() === 0 || day.getUTCDay() === 6) day.setUTCDate(day.getUTCDate() - 1);
+  return {
+    date: day.toISOString().slice(0, 10),
+    close,
+    last,
+    high: round(Math.max(close, last) * uniform(1, 1.08)),
+    volume: Math.round(avgVolume * (inPlay ? uniform(0.02, 0.2) : uniform(0.001, 0.01))),
+    changePct: (last / close - 1) * 100,
+  };
+}
 const logUniform = (lo: number, hi: number) => Math.exp(uniform(Math.log(lo), Math.log(hi)));
 const round = (n: number) => Math.round(n * 100) / 100;
 const roundTo = (n: number, step: number) => Number((Math.round(n / step) * step).toFixed(4));

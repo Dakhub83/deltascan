@@ -143,6 +143,25 @@ export const COLUMNS = {
     ...num, colId: 'ema20', headerName: 'EMA 20', width: 76, cellClass: 'num text-dim',
     valueGetter: getter((s) => s.indicators?.ema20 ?? null), valueFormatter: (p) => fmtPrice(p.value),
   },
+  prevAhChangePct: {
+    ...num, ...pctFmt, colId: 'prevAhChangePct', headerName: 'Prev AH %', width: 88,
+    headerTooltip: "Previous trading day's after-hours move, vs its 4:00 PM close",
+    valueGetter: getter((s) => s.prevAfterHours?.changePct ?? null), cellClassRules: signRules(),
+  },
+  prevAhLast: {
+    ...num, colId: 'prevAhLast', headerName: 'Prev AH Last', width: 92, cellClass: 'num text-dim',
+    headerTooltip: "Last price of the previous day's after-hours session",
+    valueGetter: getter((s) => s.prevAfterHours?.last ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  prevAhHigh: {
+    ...num, colId: 'prevAhHigh', headerName: 'Prev AH High', width: 92, cellClass: 'num text-dim',
+    valueGetter: getter((s) => s.prevAfterHours?.high ?? null), valueFormatter: (p) => fmtPrice(p.value),
+  },
+  prevAhVolume: {
+    ...num, colId: 'prevAhVolume', headerName: 'Prev AH Vol', width: 88,
+    headerTooltip: "Shares traded in the previous day's after-hours session",
+    valueGetter: getter((s) => s.prevAfterHours?.volume ?? null), valueFormatter: (p) => fmtCompact(p.value),
+  },
   range: { colId: 'range', headerName: 'Day Range', width: 110, sortable: false, cellRenderer: RangeCell },
   vwap: { ...num, colId: 'vwap', field: 'vwap', headerName: 'VWAP', width: 78, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },
   high: { ...num, colId: 'high', field: 'high', headerName: 'High', width: 76, valueFormatter: (p) => fmtPrice(p.value), cellClass: 'num text-dim' },

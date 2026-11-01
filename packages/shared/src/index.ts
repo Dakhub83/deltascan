@@ -47,6 +47,22 @@ export interface ReferenceData {
   shortInterestPct?: number;
   /** Average full-day volume (e.g. 30-day), the RVOL baseline. */
   avgVolume?: number;
+  /** The latest completed after-hours session. */
+  prevAfterHours?: PrevAfterHours;
+}
+
+/** One stock's after-hours session (16:00–20:00 ET, or after an early close) on a past trading day. */
+export interface PrevAfterHours {
+  /** The trading day, ET, YYYY-MM-DD. */
+  date: string;
+  /** The last regular-session price before the close. */
+  close: number;
+  last: number;
+  high: number;
+  /** Shares traded after the close, not counting the closing-auction prints at 16:00:00. */
+  volume: number;
+  /** `last` vs `close`. */
+  changePct: number;
 }
 
 /** Today's session state up to "now", used to seed the cache before streaming starts. */
@@ -125,6 +141,8 @@ export interface SymbolSnapshot {
   fade: FadeState | null;
   /** RSI and moving averages on completed 1-minute bars; null until there are enough bars. */
   indicators: Indicators | null;
+  /** The previous trading day's after-hours session; null when unknown. */
+  prevAfterHours: PrevAfterHours | null;
   lastTradeAt: EpochMs | null;
   updatedAt: EpochMs;
 }

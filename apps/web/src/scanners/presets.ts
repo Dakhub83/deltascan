@@ -17,7 +17,7 @@ export interface ScannerPreset {
 const n = (v: number | null | undefined) => v ?? Number.NaN;
 
 /** Extended-hours scans. Volume floors keep a single odd print from qualifying. */
-export const EXTENDED = { preMinChangePct: 3, preMinVolume: 10_000, postMinMovePct: 2, postMinVolume: 5_000 };
+export const EXTENDED = { preMinChangePct: 3, preMinVolume: 10_000, postMinMovePct: 2, postMinVolume: 5_000, prevAhMinChangePct: 5, prevAhMinVolume: 20_000 };
 
 /** Multi-strategy momentum scan: every condition must hold. */
 export const MOMENTUM = { minChangePct: 5, minRvol: 2, maxHodDistPct: 2, min5mPct: 0 };
@@ -185,6 +185,17 @@ export const PRESETS: ScannerPreset[] = [
     sort: { colId: 'preChangePct', sort: 'desc' },
     columns: ['symbol', 'tier', 'last', 'preChangePct', 'preVolume', 'preHigh', 'floatShares', 'shortInterestPct', 'chg5mPct'],
     emptyText: 'Pre-market trades come in from 4:00 to 9:30 ET. On simulated data, set MOCK_SESSION=pre in .env.',
+  },
+  {
+    id: 'prev-ah-gainers',
+    title: 'Prev Day AH Gainers',
+    description: `Up ≥ ${EXTENDED.prevAhMinChangePct}% in the previous day's after-hours (≥ ${EXTENDED.prevAhMinVolume / 1000}K shares): tomorrow's gappers`,
+    icon: Moon,
+    filter: (s) =>
+      !!s.prevAfterHours && s.prevAfterHours.changePct >= EXTENDED.prevAhMinChangePct && s.prevAfterHours.volume >= EXTENDED.prevAhMinVolume,
+    sort: { colId: 'prevAhChangePct', sort: 'desc' },
+    columns: ['symbol', 'prevAhChangePct', 'prevAhLast', 'prevAhVolume', 'preChangePct', 'last', 'changePct', 'gapPct', 'fadeStage', 'floatShares'],
+    emptyText: "No stock ran after yesterday's close, or the after-hours scan hasn't finished yet (it takes about a minute after startup).",
   },
   {
     id: 'after-hours-movers',
