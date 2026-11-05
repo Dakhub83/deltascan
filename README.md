@@ -46,7 +46,7 @@ Double-click **`start-deltascan.cmd`** in the project folder. It installs depend
 
 - For simulated data, run `start-deltascan mock` from a terminal in the project folder. It uses its own database (`data/mock.db`).
 - Alpaca allows one stream connection per account, so with live data stop any `npm run dev` before starting it, or the second one gets `406 connection limit exceeded`.
-- To start it from the desktop, right-click the file → **Show more options → Send to → Desktop (create shortcut)**.
+- To start it from the desktop, right-click the file → **Show more options → Send to → Desktop (create shortcut)**. To give the shortcut the DeltaScan logo, right-click it → **Properties → Change Icon…** and pick `deltascan.ico` from the project folder.
 
 ### Using the UI
 
