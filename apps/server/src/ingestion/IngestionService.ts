@@ -44,8 +44,10 @@ export class IngestionService {
       this.halts.onTrade(t);
     });
     this.provider.on('tradingStatus', (s) => {
-      this.halts.onStatus(s, this.store.get(s.symbol));
-      this.store.setHalted(s.symbol, this.halts.isHalted(s.symbol));
+      const snap = this.store.get(s.symbol);
+      this.halts.onStatus(s, snap);
+      // Statuses are market-wide: a halt lists in the Halts window without making an empty row.
+      if (snap) this.store.setHalted(s.symbol, this.halts.isHalted(s.symbol));
     });
     this.provider.on('quote', (q) => {
       this.counts.quotes++;

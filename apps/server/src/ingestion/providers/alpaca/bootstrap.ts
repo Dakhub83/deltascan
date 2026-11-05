@@ -53,6 +53,20 @@ export function prevCloseOf(snap: AlpacaRawSnapshot, now: number): number | null
   return etDateKey(parseAlpacaTimestamp(daily.t)) === etDateKey(now) ? (snap.prevDailyBar?.c ?? null) : daily.c;
 }
 
+/**
+ * The official close of the last session before today, from SIP daily bars. The iex snapshot's
+ * close is IEX's last print, which on thin names can sit several percent off what a broker shows
+ * (LABT 2026-11-04: 0.1998 vs 0.1914).
+ */
+export function officialPrevClose(sipDaily: readonly AlpacaRawBar[], now: number): number | null {
+  const today = etDateKey(now);
+  const past = sipDaily.filter((d) => etDateKey(parseAlpacaTimestamp(d.t)) !== today);
+  return past.length ? past[past.length - 1]!.c : null;
+}
+
+/** The free plan serves SIP history only once it's 15 minutes old. */
+const SIP_DELAY_MS = 16 * 60_000;
+
 function extended(bars: readonly Bar[]): ExtendedSessionSeed | undefined {
   if (!bars.length) return undefined;
   return {
@@ -111,17 +125,21 @@ export interface BootstrapSink {
  */
 export async function runBootstrap(rest: AlpacaRest, symbols: readonly string[], now: number, sink: BootstrapSink): Promise<string[]> {
   if (!symbols.length) return [];
-  const [snaps, minute, daily] = await Promise.all([
+  const [snaps, minute, daily, sipDaily] = await Promise.all([
     rest.snapshots(symbols),
     rest.bars(symbols, '1Min', new Date(now - HISTORY_DAYS * DAY_MS)),
+    // Volume stays on the live feed's numbers, so RVOL compares like with like.
     rest.bars(symbols, '1Day', new Date(now - (AVG_VOLUME_DAYS * 7) / 5 * DAY_MS - 7 * DAY_MS)),
+    rest
+      .bars(symbols, '1Day', new Date(now - 10 * DAY_MS), { feed: 'sip', end: new Date(now - SIP_DELAY_MS) })
+      .catch(() => ({}) as Record<string, AlpacaRawBar[]>),
   ]);
   const seeded: string[] = [];
   for (const symbol of symbols) {
     const bars = (minute[symbol] ?? []).map((b) => toBar(symbol, b));
     if (bars.length) sink.history(symbol, bars);
     const snap = snaps[symbol];
-    const prevClose = snap ? prevCloseOf(snap, now) : null;
+    const prevClose = officialPrevClose(sipDaily[symbol] ?? [], now) ?? (snap ? prevCloseOf(snap, now) : null);
     if (prevClose !== null) {
       sink.seed(seedFrom(symbol, prevClose, bars, snap?.latestTrade?.p ?? null, now));
       seeded.push(symbol);

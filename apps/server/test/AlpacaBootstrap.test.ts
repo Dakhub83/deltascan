@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Bar, ReferenceData, SessionSeed } from '@deltascan/shared';
 import { AlpacaRest, type AlpacaRawBar, type AlpacaRawSnapshot } from '../src/ingestion/providers/alpaca/AlpacaRest';
-import { avgDailyVolume, isCommonStock, prevCloseOf, runBootstrap, seedFrom, toBar } from '../src/ingestion/providers/alpaca/bootstrap';
+import { avgDailyVolume, isCommonStock, officialPrevClose, prevCloseOf, runBootstrap, seedFrom, toBar } from '../src/ingestion/providers/alpaca/bootstrap';
 
 // Friday 2026-10-30, 10:15 ET (EDT, UTC-4).
 const NOW = Date.parse('2026-10-30T14:15:00Z');
@@ -24,6 +24,13 @@ describe('Alpaca bootstrap', () => {
     const beforeToday: AlpacaRawSnapshot = { dailyBar: raw('2026-10-29T04:00:00Z', 1.9, 2.1, 1.9, 2.0, 1), prevDailyBar: raw('2026-10-28T04:00:00Z', 1.8, 1.9, 1.8, 1.85, 1) };
     expect(prevCloseOf(beforeToday, NOW)).toBe(2.0);
     expect(prevCloseOf({}, NOW)).toBeNull();
+  });
+
+  it('takes the official close from SIP daily bars, leaving out the one still forming today', () => {
+    const sip = [raw('2026-10-28T04:00:00Z', 1, 1, 1, 1.85, 1), raw('2026-10-29T04:00:00Z', 1, 1, 1, 1.91, 1), raw('2026-10-30T04:00:00Z', 1, 1, 1, 2.9, 1)];
+    expect(officialPrevClose(sip, NOW)).toBe(1.91);
+    expect(officialPrevClose(sip.slice(0, 2), NOW)).toBe(1.91);
+    expect(officialPrevClose([], NOW)).toBeNull();
   });
 
   it("builds today's session from today's minute bars only, keeping pre-market out of the regular session", () => {
@@ -68,8 +75,10 @@ describe('Alpaca bootstrap', () => {
   it('emits history, a seed and the volume baseline per symbol, skipping ones Alpaca does not know', async () => {
     const rest = {
       snapshots: async () => ({ RUN: { dailyBar: raw('2026-10-30T04:00:00Z', 2.4, 3.3, 2.4, 2.95, 1), prevDailyBar: raw('2026-10-29T04:00:00Z', 1, 2, 1, 2.0, 1), latestTrade: { p: 2.96, t: '2026-10-30T14:14:59Z' } } }),
-      bars: async (_s: readonly string[], timeframe: string) =>
-        timeframe === '1Min' ? { RUN: MINUTES } : { RUN: [raw('2026-10-29T04:00:00Z', 1, 1, 1, 1, 4_000_000)] },
+      bars: async (_s: readonly string[], timeframe: string, _start: Date, opts: { feed?: string } = {}) =>
+        timeframe === '1Min' ? { RUN: MINUTES }
+        : opts.feed === 'sip' ? { RUN: [raw('2026-10-29T04:00:00Z', 1, 1, 1, 1.91, 90_000_000)] }
+        : { RUN: [raw('2026-10-29T04:00:00Z', 1, 1, 1, 1, 4_000_000)] },
     } as unknown as AlpacaRest;
     const got: { history: [string, Bar[]][]; seed: SessionSeed[]; reference: ReferenceData[] } = { history: [], seed: [], reference: [] };
     const seeded = await runBootstrap(rest, ['RUN', 'NOPE'], NOW, {
@@ -79,8 +88,22 @@ describe('Alpaca bootstrap', () => {
     });
     expect(seeded).toEqual(['RUN']);
     expect(got.history.map(([s, b]) => [s, b.length])).toEqual([['RUN', 6]]);
-    expect(got.seed[0]).toMatchObject({ symbol: 'RUN', prevClose: 2.0, last: 2.96, open: 3.0 });
+    // prevClose is the SIP close, not the iex snapshot's 2.0; volume stays on the live feed.
+    expect(got.seed[0]).toMatchObject({ symbol: 'RUN', prevClose: 1.91, last: 2.96, open: 3.0 });
     expect(got.reference).toEqual([{ symbol: 'RUN', avgVolume: 4_000_000 }]);
+  });
+
+  it("falls back to the snapshot's close when SIP history is refused", async () => {
+    const rest = {
+      snapshots: async () => ({ RUN: { prevDailyBar: raw('2026-10-29T04:00:00Z', 1, 2, 1, 2.0, 1) } }),
+      bars: async (_s: readonly string[], timeframe: string, _start: Date, opts: { feed?: string } = {}) => {
+        if (opts.feed === 'sip') throw new Error('403 subscription does not permit querying recent SIP data');
+        return timeframe === '1Min' ? { RUN: MINUTES } : {};
+      },
+    } as unknown as AlpacaRest;
+    const seeds: SessionSeed[] = [];
+    await runBootstrap(rest, ['RUN'], NOW, { history: () => {}, seed: (s) => seeds.push(s), reference: () => {} });
+    expect(seeds[0]?.prevClose).toBe(2.0);
   });
 });
 

@@ -109,7 +109,9 @@ Halts, momentum, short-side signals and the web app were merged into `main` on 2
 
 ## Open items
 
-1. During market hours with live Alpaca: check trade flow, prevClose against a broker (Alpaca's daily close may include after-hours) and pre-market movers.
-2. Check `ALPACA_STATUSES=true` against a real Alpaca plan, since an unsupported channel makes Alpaca reject the whole subscription.
-3. Possibly: make the tab close button (×) visible without hovering. It's hidden until you hover the tab, so it's hard to find.
+Checked live on 2026-11-05 (regular hours, free iex): trade flow works. `statuses: ['*']` is accepted and doesn't count toward the 30-symbol limit, so `ALPACA_STATUSES` defaults on and subscribes market-wide; halts of untracked stocks go to the Halts window without making a row. prevClose comes from SIP daily bars (`officialPrevClose`), because the iex snapshot's close is IEX's last print (LABT 0.1998 vs 0.1914 official).
+
+1. Pre-market: check that movers and the radar pick up gappers before 9:30.
+2. The gainers list fills with leveraged single-stock ETFs (AAOZ, IREZ, NBIZ, SNDQ, APLZ, AXTQ, UVIX, SOXS…) and Z-suffix tickers like AMPGZ, which the W/R/U filter in `isCommonStock` misses. They need an ETF/asset-class source to drop them.
+3. Halts aren't persisted, so a server restart loses the day's Halts window.
 4. Continue docs/ARCHITECTURE.md §5: bad-print filtering and a daily reset (steps 1–2; the REST bootstrap itself is done), daily-bar indicators (step 3; the 1-minute RSI/EMA are done), float / market cap / short interest (step 4) and the server-side scanner engine (step 5).

@@ -14,7 +14,7 @@ export interface AlpacaStreamOptions {
   secretKey: string;
   feed: 'iex' | 'sip' | 'test';
   sandbox: boolean;
-  /** Subscribe to trading statuses (halts). Off by default until verified on your data plan. */
+  /** Subscribe to market-wide trading statuses (halts). */
   statuses: boolean;
   /**
    * Subscribe to quotes (bid/ask, spread). On the free iex plan trades and quotes share one
@@ -305,7 +305,7 @@ export class AlpacaStreamProvider extends MarketDataProvider {
     this.log.info({ live: plan.add.map(fmt), barsOnly: plan.drop.map(fmt), slots: this.slots }, 'live slots rotated');
   }
 
-  /** Trade (and quote / status) subscriptions. Without the radar's wildcard, bars ride along. */
+  /** Trade (and quote) subscriptions. Without the radar's wildcard, bars ride along. */
   private sendTrades(action: 'subscribe' | 'unsubscribe', symbols: string[]): void {
     if (!symbols.length) return;
     this.socket.send({
@@ -313,7 +313,6 @@ export class AlpacaStreamProvider extends MarketDataProvider {
       trades: symbols,
       ...(this.opts.quotes ? { quotes: symbols } : {}),
       ...(this.radar ? {} : { bars: symbols }),
-      ...(this.opts.statuses ? { statuses: symbols } : {}),
     });
     this.log.info({ action, count: symbols.length }, 'subscription sent');
   }
@@ -410,6 +409,8 @@ export class AlpacaStreamProvider extends MarketDataProvider {
       // Restore the full subscription set (initial connect and every reconnect).
       this.sendTrades('subscribe', [...this.live.keys()]);
       if (this.radar) this.socket.send({ action: 'subscribe', bars: ['*'] });
+      // Market-wide, and outside the free plan's 30-symbol limit (probed 2026-11-05).
+      if (this.opts.statuses) this.socket.send({ action: 'subscribe', statuses: ['*'] });
       // After a reconnect, trades were missed: re-seed today's state.
       if (this.authentications > 1) void this.bootstrap(this.symbols);
     }

@@ -93,7 +93,7 @@ function Tab({ api, params }: IDockviewPanelHeaderProps) {
           e.stopPropagation();
           api.close();
         }}
-        className="ml-0.5 grid size-4 place-items-center rounded text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-hover hover:text-fg"
+        className="ml-0.5 grid size-4 place-items-center rounded text-muted opacity-60 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:bg-hover hover:text-fg"
       >
         <X className="size-3" />
       </button>

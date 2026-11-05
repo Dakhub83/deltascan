@@ -34,7 +34,7 @@ const schema = z
     ALPACA_FEED: z.enum(['iex', 'sip', 'test']).default('iex'),
     ALPACA_SANDBOX: bool(false),
     ALPACA_PAPER: bool(true),
-    ALPACA_STATUSES: bool(false),
+    ALPACA_STATUSES: bool(true),
     // Bid/ask quotes. On free iex, trades + quotes share the 30-subscription limit, so this halves the symbols.
     ALPACA_QUOTES: bool(false),
     // Top gainers added to the stream each refresh (0 = WATCHLIST only), up to ALPACA_MAX_SYMBOLS in total.
