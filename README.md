@@ -40,6 +40,14 @@ npm test
 npm run typecheck
 ```
 
+### Running it without an editor (Windows)
+
+Double-click **`start-deltascan.cmd`** in the project folder. It installs dependencies on the first run, rebuilds the site when the code has changed (about 30 s), starts the server with the settings in `.env`, and opens http://localhost:4000 (the landing page; the dashboard is at `/app/`). Close the window to stop it.
+
+- For simulated data, run `start-deltascan mock` from a terminal in the project folder. It uses its own database (`data/mock.db`).
+- Alpaca allows one stream connection per account, so with live data stop any `npm run dev` before starting it, or the second one gets `406 connection limit exceeded`.
+- To start it from the desktop, right-click the file → **Show more options → Send to → Desktop (create shortcut)**.
+
 ### Using the UI
 
 - **+ Window** opens any scanner, an alert window or a symbol detail window. New windows open floating; drag a tab to dock it.
