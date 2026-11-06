@@ -103,7 +103,7 @@ export function NewHighsPanel({ params, api: panelApi }: IDockviewPanelProps<New
   const nowRef = useRef(now);
   nowRef.current = now;
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
+  const [onSymbolClick] = useState(() => symbolClicks());
 
   useEffect(
     () =>

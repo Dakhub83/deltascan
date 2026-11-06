@@ -71,6 +71,7 @@ function iconFor(id: string, params: Record<string, unknown> | undefined) {
 function Tab({ api, params }: IDockviewPanelHeaderProps) {
   const [title, setTitle] = useState(api.title);
   useEffect(() => {
+    setTitle(api.title); // A restored panel can retitle itself before this tab subscribes.
     const d = api.onDidTitleChange((e) => setTitle(e.title));
     return () => d.dispose();
   }, [api]);

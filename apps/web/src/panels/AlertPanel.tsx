@@ -49,7 +49,7 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
   filterRef.current = { types, clearedAt };
   const [count, setCount] = useState(0);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
+  const [onSymbolClick] = useState(() => symbolClicks());
   const audibleTypes = useUiStore((s) => s.settings.audibleTypes);
   const updateSettings = useUiStore((s) => s.updateSettings);
 

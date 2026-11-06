@@ -287,7 +287,7 @@ export function toggleAttachedDilution(group: DockviewGroupPanel): void {
   if (!api) return;
   const existing = attachedDilution(group.id);
   if (existing) return existing.api.close();
-  const params = { attachedTo: group.id, symbol: useUiStore.getState().selectedSymbol ?? undefined };
+  const params = { linked: true, attachedTo: group.id };
   const base = { id: `dilution-${uid()}`, component: 'dilution', title: 'Dilution', params };
   if (group.api.location.type === 'floating') {
     const root = group.element.closest('.dv-dockview')?.getBoundingClientRect();
@@ -345,39 +345,49 @@ export function symbolDoubleClick(onDouble: (symbol: string) => void): (symbol: 
   };
 }
 
-/** A click in window `fromPanelId` shows `symbol` in the Dilution tracker attached to it. */
-export function followInAttached(symbol: string, fromPanelId: string): void {
-  const from = api?.getPanel(fromPanelId);
-  const attached = from ? attachedDilution(from.group.id) : undefined;
-  if (!attached || (attached.params as { symbol?: string } | undefined)?.symbol === symbol) return;
-  attached.api.updateParameters({ symbol });
+/** Quote cards docked or floating in this page. A popped-out card stays on its symbol, for a second monitor. */
+function pageQuoteCards(): IDockviewPanel[] {
+  return api?.panels.filter((p) => p.api.component === 'quote' && p.group.api.location.type !== 'popout') ?? [];
+}
+
+/** A row click shows `symbol` in the page's quote cards. Linked trackers follow the selection themselves. */
+export function followClick(symbol: string): void {
+  const followers = pageQuoteCards().filter((p) => (p.params as { symbol?: string } | undefined)?.symbol !== symbol);
+  if (!followers.length) return;
+  for (const panel of followers) panel.api.updateParameters({ symbol });
   requestLayoutSave();
 }
 
-/**
- * Row clicks for a window: every click updates its attached Dilution tracker, a double-click
- * opens a quote card (or nothing, when the tracker is attached).
- */
-export function symbolClicks(fromPanelId: string): (symbol: string) => void {
-  const double = symbolDoubleClick((s) => openQuoteFor(s, fromPanelId));
+// Arrow keys, the ticker, the search box and typed symbols all set the selection without a row click.
+useUiStore.subscribe((state, previous) => {
+  if (state.selectedSymbol && state.selectedSymbol !== previous.selectedSymbol) followClick(state.selectedSymbol);
+});
+
+/** Row clicks: every click updates the quote cards in the page, a double-click calls `openQuoteFor`. */
+export function symbolClicks(): (symbol: string) => void {
+  const double = symbolDoubleClick(openQuoteFor);
   return (symbol) => {
-    followInAttached(symbol, fromPanelId);
+    followClick(symbol);
     double(symbol);
   };
 }
 
 /**
  * Double-click on a symbol: a quote card pinned to it, in its own browser window. If that
- * symbol already has one, bring it to the front instead of opening a duplicate.
+ * symbol already has one, or a card or linked tracker is showing in this page, use that instead.
  */
-export function openQuoteFor(symbol: string, fromPanelId?: string): void {
+export function openQuoteFor(symbol: string): void {
   if (!api) return;
-  // The window has its own Dilution tracker, which already follows the click: no extra window.
-  const from = fromPanelId ? api.getPanel(fromPanelId) : undefined;
-  const attached = from ? attachedDilution(from.group.id) : undefined;
-  if (attached) return attached.api.setActive();
+  // A linked tracker on screen already shows this symbol: no extra window.
+  const tracker = api.panels.find((p) => p.api.component === 'dilution' && p.api.isVisible && (p.params as { linked?: boolean } | undefined)?.linked !== false);
+  if (tracker) return useUiStore.getState().setSelectedSymbol(symbol);
   const existing = api.panels.find((p) => p.api.component === 'quote' && (p.params as { symbol?: string } | undefined)?.symbol === symbol);
-  if (!existing) return popOut('quote', `${symbol} · Quote`, { symbol }, 440, 820);
+  if (!existing) {
+    const [card, ...others] = pageQuoteCards();
+    if (!card) return popOut('quote', `${symbol} · Quote`, { symbol }, 440, 820);
+    for (const panel of [card, ...others]) panel.api.updateParameters({ symbol });
+    return card.api.setActive();
+  }
   existing.api.setActive();
   const location = existing.group.api.location;
   if (location.type === 'popout') location.getWindow().focus();

@@ -5,7 +5,6 @@ import type { SymbolSnapshot } from '@deltascan/shared';
 import { Plus, X } from 'lucide-react';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
-import type { IDockviewPanelProps } from 'dockview';
 import { symbolClicks } from '../lib/layout';
 import { COLUMNS, type ColumnId } from '../scanners/columns';
 import { useUiStore } from '../store/uiStore';
@@ -34,7 +33,7 @@ function RemoveCell({ data }: CustomCellRendererProps<Row>) {
   );
 }
 
-export function WatchlistPanel({ api: panelApi }: IDockviewPanelProps) {
+export function WatchlistPanel() {
   const symbols = useWatchlistStore((s) => s.symbols);
   const loaded = useWatchlistStore((s) => s.loaded);
   const error = useWatchlistStore((s) => s.error);
@@ -44,7 +43,7 @@ export function WatchlistPanel({ api: panelApi }: IDockviewPanelProps) {
   const symbolsRef = useRef(symbols);
   symbolsRef.current = symbols;
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
+  const [onSymbolClick] = useState(() => symbolClicks());
 
   // Live data for the watched symbols only.
   useEffect(
