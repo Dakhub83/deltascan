@@ -349,8 +349,12 @@ export function symbolDoubleClick(onDouble: (symbol: string) => void): (symbol: 
  * Double-click on a symbol: a quote card pinned to it, in its own browser window. If that
  * symbol already has one, bring it to the front instead of opening a duplicate.
  */
-export function openQuoteFor(symbol: string): void {
+export function openQuoteFor(symbol: string, fromPanelId?: string): void {
   if (!api) return;
+  // The window has its own Dilution tracker, which already follows the click: no extra window.
+  const from = fromPanelId ? api.getPanel(fromPanelId) : undefined;
+  const attached = from ? attachedDilution(from.group.id) : undefined;
+  if (attached) return attached.api.setActive();
   const existing = api.panels.find((p) => p.api.component === 'quote' && (p.params as { symbol?: string } | undefined)?.symbol === symbol);
   if (!existing) return popOut('quote', `${symbol} · Quote`, { symbol }, 440, 820);
   existing.api.setActive();

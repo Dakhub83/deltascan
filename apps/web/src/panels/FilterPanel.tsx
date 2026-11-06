@@ -192,7 +192,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => visibleFrom(params.columnState, preset.columns));
   const selectedSymbol = useUiStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
+  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
 
   const columnDefs = useMemo<ColDef<SymbolSnapshot>[]>(() => {
     const ordered = [...preset.columns, ...ALL_COLUMN_IDS.filter((id) => !preset.columns.includes(id))];

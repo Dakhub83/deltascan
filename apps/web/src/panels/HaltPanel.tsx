@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
+import type { IDockviewPanelProps } from 'dockview';
 import { openQuoteFor, symbolDoubleClick } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 
@@ -76,11 +77,11 @@ const signRules = {
   num: () => true,
 };
 
-export function HaltPanel() {
+export function HaltPanel({ api: panelApi }: IDockviewPanelProps) {
   const gridApi = useRef<GridApi<HaltEvent> | null>(null);
   const [counts, setCounts] = useState({ active: 0, total: 0 });
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick(openQuoteFor));
+  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
 
   const resetRows = useCallback(() => {
     const rows = [...marketData.halts.values()].sort(byActivityThenTime);
