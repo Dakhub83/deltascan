@@ -11,7 +11,7 @@ import { passesIndicators, type IndicatorFilter } from '../scanners/indicatorFil
 import { IndicatorFilterButton } from '../components/IndicatorFilterButton';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
-import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
+import { requestLayoutSave, symbolClicks } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { ALL_COLUMN_IDS, COLUMNS, type ColumnId } from '../scanners/columns';
 import { PRESETS, PRESETS_BY_ID } from '../scanners/presets';
@@ -192,7 +192,7 @@ export function FilterPanel({ params, api: panelApi }: IDockviewPanelProps<Filte
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => visibleFrom(params.columnState, preset.columns));
   const selectedSymbol = useUiStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
+  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
 
   const columnDefs = useMemo<ColDef<SymbolSnapshot>[]>(() => {
     const ordered = [...preset.columns, ...ALL_COLUMN_IDS.filter((id) => !preset.columns.includes(id))];

@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { fmtCompact, fmtMultiple, fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
-import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
+import { requestLayoutSave, symbolClicks } from '../lib/layout';
 import { fmtAgo, isQuiet, lastNhodBySymbol, nhodLeaders, nhodRows, passesNhodFilter, QUIET_AFTER_MS, STREAK_WINDOW_MS, type NhodRow } from '../lib/newHighs';
 import { isActive, rangeLabel, type PriceRange } from '../scanners/priceRange';
 import { floatLabel, type FloatRange } from '../scanners/floatRange';
@@ -103,7 +103,7 @@ export function NewHighsPanel({ params, api: panelApi }: IDockviewPanelProps<New
   const nowRef = useRef(now);
   nowRef.current = now;
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
+  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
 
   useEffect(
     () =>

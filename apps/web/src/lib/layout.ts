@@ -287,7 +287,7 @@ export function toggleAttachedDilution(group: DockviewGroupPanel): void {
   if (!api) return;
   const existing = attachedDilution(group.id);
   if (existing) return existing.api.close();
-  const params = { linked: true, attachedTo: group.id };
+  const params = { attachedTo: group.id, symbol: useUiStore.getState().selectedSymbol ?? undefined };
   const base = { id: `dilution-${uid()}`, component: 'dilution', title: 'Dilution', params };
   if (group.api.location.type === 'floating') {
     const root = group.element.closest('.dv-dockview')?.getBoundingClientRect();
@@ -342,6 +342,27 @@ export function symbolDoubleClick(onDouble: (symbol: string) => void): (symbol: 
     } else {
       last = { symbol, at: now };
     }
+  };
+}
+
+/** A click in window `fromPanelId` shows `symbol` in the Dilution tracker attached to it. */
+export function followInAttached(symbol: string, fromPanelId: string): void {
+  const from = api?.getPanel(fromPanelId);
+  const attached = from ? attachedDilution(from.group.id) : undefined;
+  if (!attached || (attached.params as { symbol?: string } | undefined)?.symbol === symbol) return;
+  attached.api.updateParameters({ symbol });
+  requestLayoutSave();
+}
+
+/**
+ * Row clicks for a window: every click updates its attached Dilution tracker, a double-click
+ * opens a quote card (or nothing, when the tracker is attached).
+ */
+export function symbolClicks(fromPanelId: string): (symbol: string) => void {
+  const double = symbolDoubleClick((s) => openQuoteFor(s, fromPanelId));
+  return (symbol) => {
+    followInAttached(symbol, fromPanelId);
+    double(symbol);
   };
 }
 

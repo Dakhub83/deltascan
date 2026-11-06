@@ -85,7 +85,7 @@
   --dv-sash-color: transparent;
   --dv-active-sash-color: var(--color-accent);
   --dv-active-sash-transition-duration: 0.1s;
-  --dv-active-sash-transition-delay: 0.3s;
+  --dv-active-sash-transition-delay: 0s;
   --dv-group-view-background-color: var(--color-panel);
   --dv-tabs-and-actions-container-background-color: var(--color-bg);
   --dv-activegroup-visiblepanel-tab-background-color: var(--color-panel);
@@ -108,8 +108,39 @@
   border-radius: 6px;
   overflow: hidden;
 }
+/* The selected window stands out from the rest. */
 .dockview-theme-scanner .dv-groupview.dv-active-group {
-  border-color: var(--color-line-strong);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+/* Window edges: a visible grip line in each gap, lit while hovered or dragged. */
+.dockview-theme-scanner .dv-sash::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: var(--color-line-strong);
+  opacity: 0.7;
+  transition: background-color 0.1s, opacity 0.1s;
+  pointer-events: none;
+}
+.dockview-theme-scanner .dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash::after {
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+}
+.dockview-theme-scanner .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash::after {
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+}
+.dockview-theme-scanner .dv-sash:hover::after,
+.dockview-theme-scanner .dv-sash:active::after {
+  background: var(--color-accent);
+  opacity: 1;
 }
 .dockview-theme-scanner .dv-tabs-and-actions-container {
   border-bottom: 1px solid var(--color-line);

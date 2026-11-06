@@ -9,7 +9,7 @@ import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { ALERT_META } from '../lib/alertMeta';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
-import { openQuoteFor, requestLayoutSave, symbolDoubleClick } from '../lib/layout';
+import { requestLayoutSave, symbolClicks } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 import { IconButton } from '../components/Popover';
 
@@ -49,7 +49,7 @@ export function AlertPanel({ params, api: panelApi }: IDockviewPanelProps<AlertP
   filterRef.current = { types, clearedAt };
   const [count, setCount] = useState(0);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
+  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
   const audibleTypes = useUiStore((s) => s.settings.audibleTypes);
   const updateSettings = useUiStore((s) => s.updateSettings);
 

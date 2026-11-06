@@ -8,7 +8,7 @@ import { gridTheme } from '../lib/gridTheme';
 import { marketData } from '../lib/marketData';
 import { fmtPct, fmtPrice, fmtTimeET } from '../lib/format';
 import type { IDockviewPanelProps } from 'dockview';
-import { openQuoteFor, symbolDoubleClick } from '../lib/layout';
+import { symbolClicks } from '../lib/layout';
 import { useUiStore } from '../store/uiStore';
 
 const NEW_ROW_MS = 2_500;
@@ -81,7 +81,7 @@ export function HaltPanel({ api: panelApi }: IDockviewPanelProps) {
   const gridApi = useRef<GridApi<HaltEvent> | null>(null);
   const [counts, setCounts] = useState({ active: 0, total: 0 });
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
-  const [onSymbolClick] = useState(() => symbolDoubleClick((s) => openQuoteFor(s, panelApi.id)));
+  const [onSymbolClick] = useState(() => symbolClicks(panelApi.id));
 
   const resetRows = useCallback(() => {
     const rows = [...marketData.halts.values()].sort(byActivityThenTime);

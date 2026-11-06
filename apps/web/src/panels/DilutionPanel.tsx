@@ -434,11 +434,13 @@ function Report({
 }
 
 export function DilutionPanel({ params, api: panelApi }: IDockviewPanelProps<DilutionPanelParams>) {
-  const linked = params.linked ?? true;
+  // An attached tracker shows what's clicked in its own window (`followInAttached`), nothing else.
+  const attached = !!params.attachedTo;
+  const linked = !attached && (params.linked ?? true);
   const selected = useUiStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useUiStore((s) => s.setSelectedSymbol);
   const simulated = useUiStore((s) => s.provider?.provider === 'mock');
-  const symbol = (linked ? selected : params.symbol) ?? null;
+  const symbol = (linked ? selected : attached ? (params.symbol ?? selected) : params.symbol) ?? null;
   const row = useLiveRow(symbol);
   const profile = useCompanyProfile(symbol);
   const [result, setResult] = useState<DilutionResult | 'loading' | null>(null);
@@ -497,7 +499,7 @@ export function DilutionPanel({ params, api: panelApi }: IDockviewPanelProps<Dil
             className="h-6 w-20 rounded-md border border-line bg-bg px-2 text-[12px] font-semibold text-fg uppercase outline-none placeholder:font-semibold placeholder:text-fg placeholder:normal-case focus:border-accent/60 focus:placeholder:text-muted"
           />
         </form>
-        <button
+        {!attached && <button
           type="button"
           onClick={() => (linked ? update({ linked: false, symbol }) : update({ linked: true }))}
           title={linked ? 'Linked to the selected symbol. Click to pin this window to its symbol.' : 'Pinned. Click to follow the selected symbol.'}
@@ -505,7 +507,7 @@ export function DilutionPanel({ params, api: panelApi }: IDockviewPanelProps<Dil
           className={clsx('grid size-6 place-items-center rounded-md transition-colors hover:bg-hover', linked ? 'text-accent' : 'text-muted hover:text-fg')}
         >
           {linked ? <Link2 className="size-3.5" /> : <Link2Off className="size-3.5" />}
-        </button>
+        </button>}
         <span className="ml-auto text-[10px] font-medium tracking-wider text-muted uppercase">SEC EDGAR</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
