@@ -15,6 +15,8 @@ import { useUiStore } from '../store/uiStore';
 export interface DilutionPanelParams {
   symbol?: string | null;
   linked?: boolean;
+  /** The window group this tracker is attached to (`toggleAttachedDilution`). */
+  attachedTo?: string;
 }
 
 const FILINGS_SHOWN = 8;

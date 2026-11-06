@@ -112,6 +112,8 @@ The scanner floors and LATE thresholds are in `FADE` (`apps/web/src/scanners/fad
 ### Dilution window
 
 **+ Window → Dilution tracker** opens a dilution report as a tab in the layout, next to Symbol and Chart. Drag it anywhere, or use the window's pop-out button to move it to another monitor. It follows the symbol you click, like the chart.
+
+To keep a tracker beside a particular window, press the **panel** button (a square with a bar on the right) in that window's header. A docked window gets the tracker split off on its right, and a floating window gets one against its right edge. It follows the symbol you click; press the button again to remove it.
 - **Risk score:** a 0–10 score with the reason behind each point. It weighs cash runway, recent offerings, unregistered equity sales, share-count growth, reverse splits, warrants, convertible debt, delisting notices and late filings.
 - **At a glance:** market cap, shares outstanding, cash, monthly burn, runway, warrants, preferred shares and convertible debt.
 - **Filings:** the last 12 months of dilution-related SEC filings, each linking to the original on sec.gov.

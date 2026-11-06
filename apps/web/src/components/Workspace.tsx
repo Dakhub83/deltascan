@@ -17,6 +17,8 @@ import {
   Maximize2,
   Minimize2,
   OctagonPause,
+  PanelRightClose,
+  PanelRightOpen,
   PictureInPicture2,
   Siren,
   ShieldAlert,
@@ -35,7 +37,7 @@ import { ShortCalcPanel } from '../panels/ShortCalcPanel';
 import { QuotePanel } from '../panels/QuotePanel';
 import { SymbolPanel } from '../panels/SymbolPanel';
 import { PRESETS_BY_ID } from '../scanners/presets';
-import { buildDefaultLayout, requestLayoutSave, restoreLayout, setDockApi } from '../lib/layout';
+import { attachedDilution, buildDefaultLayout, requestLayoutSave, restoreLayout, setDockApi, toggleAttachedDilution } from '../lib/layout';
 import { IconButton } from './Popover';
 
 const theme: DockviewTheme = { name: 'scanner', className: 'dockview-theme-scanner', gap: 6 };
@@ -104,18 +106,35 @@ function Tab({ api, params }: IDockviewPanelHeaderProps) {
 function HeaderActions({ api, containerApi, group, activePanel }: IDockviewHeaderActionsProps) {
   const [maximized, setMaximized] = useState(api.isMaximized());
   const [location, setLocation] = useState(api.location.type);
+  const [attached, setAttached] = useState(() => !!attachedDilution(group.id));
 
   useEffect(() => {
     const a = containerApi.onDidMaximizedGroupChange(() => setMaximized(api.isMaximized()));
     const b = api.onDidLocationChange((e) => setLocation(e.location.type));
+    const sync = () => setAttached(!!attachedDilution(group.id));
+    const c = containerApi.onDidAddPanel(sync);
+    const d = containerApi.onDidRemovePanel(sync);
     return () => {
       a.dispose();
       b.dispose();
+      c.dispose();
+      d.dispose();
     };
-  }, [api, containerApi]);
+  }, [api, containerApi, group]);
+
+  const canAttach = location !== 'popout' && activePanel?.api.component !== 'dilution';
 
   return (
     <div className="flex h-full items-center gap-0.5 px-1">
+      {canAttach && (
+        <IconButton
+          title={attached ? 'Detach the Dilution tracker' : 'Attach a Dilution tracker on the right (follows the symbol you click)'}
+          onClick={() => toggleAttachedDilution(group)}
+          className={clsx(attached && 'text-accent')}
+        >
+          {attached ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
+        </IconButton>
+      )}
       {location === 'grid' && (
         <>
           <IconButton

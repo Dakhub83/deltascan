@@ -1,4 +1,4 @@
-import type { DockviewApi, SerializedDockview } from 'dockview';
+import type { DockviewApi, DockviewGroupPanel, IDockviewPanel, SerializedDockview } from 'dockview';
 import { PRESETS_BY_ID } from '../scanners/presets';
 import { useUiStore } from '../store/uiStore';
 
@@ -268,6 +268,41 @@ export function addDilutionWindow(params: { symbol?: string; linked?: boolean } 
     params,
     position: neighbour ? { referencePanel: neighbour.id, direction: 'within' } : { direction: 'right' },
   });
+  panel.api.setActive();
+}
+
+const ATTACHED_WIDTH = 440;
+
+/** The Dilution tracker attached to window group `groupId`, if it has one. */
+export function attachedDilution(groupId: string): IDockviewPanel | undefined {
+  return api?.panels.find((p) => p.api.component === 'dilution' && (p.params as { attachedTo?: string } | undefined)?.attachedTo === groupId);
+}
+
+/**
+ * Attaches a linked Dilution tracker to the right of `group` (any window), or removes it again.
+ * A docked window gets a split that moves and resizes with the layout; a floating one gets a
+ * floating tracker butted against its right edge.
+ */
+export function toggleAttachedDilution(group: DockviewGroupPanel): void {
+  if (!api) return;
+  const existing = attachedDilution(group.id);
+  if (existing) return existing.api.close();
+  const params = { linked: true, attachedTo: group.id };
+  const base = { id: `dilution-${uid()}`, component: 'dilution', title: 'Dilution', params };
+  if (group.api.location.type === 'floating') {
+    const root = group.element.closest('.dv-dockview')?.getBoundingClientRect();
+    const box = (group.element.closest('.dv-resize-container') ?? group.element).getBoundingClientRect();
+    const left = root ? box.right - root.left : 0;
+    const width = root ? Math.min(ATTACHED_WIDTH, Math.max(320, root.width - left)) : ATTACHED_WIDTH;
+    // No room on the right: overlap the window's right edge instead, as the quote card does.
+    const x = root && left + width > root.width ? Math.max(0, root.width - width) : left;
+    api.addPanel({ ...base, floating: { x, y: root ? box.top - root.top : 0, width, height: Math.max(360, box.height) } }).api.setActive();
+    return;
+  }
+  const before = group.api.width;
+  const panel = api.addPanel({ ...base, position: { referenceGroup: group.id, direction: 'right' } });
+  // Never squeeze the window it's attached to below about half its width.
+  panel.group.api.setSize({ width: Math.min(ATTACHED_WIDTH, Math.round(before * 0.45)) });
   panel.api.setActive();
 }
 
